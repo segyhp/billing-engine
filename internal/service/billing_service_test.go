@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -79,6 +80,45 @@ func TestGetOutstanding_Success(t *testing.T) {
 	// Assert
 	assert.NoError(t, err)
 	assert.True(t, outstanding.Equal(decimal.NewFromInt(4780000))) // 5000000 + 500000 - 220000
+
+	mockLoanRepo.AssertExpectations(t)
+	mockPaymentRepo.AssertExpectations(t)
+}
+
+func TestIsDelinquent_Success(t *testing.T) {
+	mockLoanRepo := &mocks.MockLoanRepository{}
+	mockPaymentRepo := &mocks.MockPaymentRepository{}
+
+	service := &BillingService{
+		loanRepo:    mockLoanRepo,
+		paymentRepo: mockPaymentRepo,
+	}
+
+	loanID := "LOAN123"
+	loan := &domain.Loan{
+		LoanID:        loanID,
+		Amount:        decimal.NewFromInt(5000000),
+		InterestRate:  decimal.NewFromFloat(0.10),
+		DurationWeeks: 50,
+		WeeklyPayment: decimal.NewFromInt(110000),
+		Status:        "ACTIVE",
+		CreatedAt:     time.Now(),
+	}
+
+	schedules := []*domain.LoanSchedule{
+		{LoanID: loanID, WeekNumber: 1, DueDate: loan.CreatedAt.AddDate(0, 0, -14), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
+		{LoanID: loanID, WeekNumber: 2, DueDate: loan.CreatedAt.AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
+	}
+
+	mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+	mockLoanRepo.On("GetScheduleByLoanID", mock.Anything, loanID).Return(schedules, nil)
+
+	// Act
+	delinquent, err := service.IsDelinquent(context.Background(), loanID)
+
+	// Assert
+	assert.NoError(t, err)
+	assert.True(t, delinquent)
 
 	mockLoanRepo.AssertExpectations(t)
 	mockPaymentRepo.AssertExpectations(t)
