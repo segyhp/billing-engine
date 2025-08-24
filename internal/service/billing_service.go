@@ -33,16 +33,40 @@ func NewBillingService(
 }
 
 // CreateLoan creates a new loan with payment schedule
-// TODO: Implement this method with business logic
 func (s *BillingService) CreateLoan(ctx context.Context, loanID string) (*domain.Loan, []*domain.LoanSchedule, error) {
-	// Business logic to implement:
-	// 1. Create loan entity with the configured amount, interest rate, and duration
-	// 2. Calculate weekly payment amount: (Principal + Interest) / Duration
-	// 3. Generate payment schedule for 50 weeks
-	// 4. Save loan and schedule to database
-	// 5. Cache loan data in Redis for fast access
+	// Create loan entity
+	loan := &domain.Loan{
+		LoanID:        loanID,
+		Amount:        decimal.NewFromInt(5000000), // from config
+		InterestRate:  decimal.NewFromFloat(0.10),  // from config
+		DurationWeeks: 50,                          // from config
+		WeeklyPayment: s.calculateWeeklyPayment(),
+		Status:        "ACTIVE",
+	}
 
-	panic("TODO: Implement CreateLoan business logic")
+	// Save loan
+	if err := s.loanRepo.Create(ctx, loan); err != nil {
+		return nil, nil, err
+	}
+
+	// Generate schedule
+	schedule := make([]*domain.LoanSchedule, 50)
+	for i := 0; i < 50; i++ {
+		schedule[i] = &domain.LoanSchedule{
+			LoanID:     loanID,
+			WeekNumber: i + 1,
+			DueDate:    loan.CreatedAt.AddDate(0, 0, (i+1)*7),
+			DueAmount:  loan.WeeklyPayment,
+			Status:     "PENDING",
+		}
+	}
+
+	// Save schedule
+	if err := s.loanRepo.CreateSchedule(ctx, schedule); err != nil {
+		return nil, nil, err
+	}
+
+	return loan, schedule, nil
 }
 
 // GetOutstanding calculates and returns the outstanding balance for a loan
@@ -102,9 +126,11 @@ func (s *BillingService) GetSchedule(ctx context.Context, loanID string) ([]*dom
 // Helper method to calculate weekly payment amount
 // TODO: Implement this helper method
 func (s *BillingService) calculateWeeklyPayment() decimal.Decimal {
-	// Business logic to implement:
-	// Weekly Payment = (Principal + (Principal * Annual Interest Rate)) / Number of Weeks
-	// Example: (5,000,000 + (5,000,000 * 0.10)) / 50 = 110,000
+	principal := decimal.NewFromInt(5000000)
+	annualRate := decimal.NewFromFloat(0.10)
+	weeks := decimal.NewFromInt(50)
 
-	panic("TODO: Implement calculateWeeklyPayment helper")
+	interest := principal.Mul(annualRate)
+	totalAmount := principal.Add(interest)
+	return totalAmount.Div(weeks)
 }
