@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/segyhp/billing-engine/internal/config"
 	"github.com/segyhp/billing-engine/internal/handler"
+	"github.com/segyhp/billing-engine/internal/repository"
+	"github.com/segyhp/billing-engine/internal/service"
 )
 
 func main() {
@@ -35,15 +38,18 @@ func main() {
 	redisClient := initRedis(cfg)
 	defer redisClient.Close()
 
-	//todo Initialize repositories
+	//Initialize repositories
+	loanRepo := repository.NewLoanRepository(db)
+	paymentRepo := repository.NewPaymentRepository(db)
 
-	//todo Initialize services
-	//todo Initialize billing handlers
+	//Initialize service
+	billingService := service.NewBillingService(loanRepo, paymentRepo, redisClient, cfg)
 
+	billingHandler := handler.NewBillingHandler(billingService)
 	healthHandler := handler.NewHealthHandler(db, redisClient)
 
 	// Setup routes
-	router := setupRoutes(healthHandler)
+	router := setupRoutes(billingHandler, healthHandler)
 
 	// Start server
 	server := &http.Server{
@@ -56,7 +62,7 @@ func main() {
 	// Start server in a goroutine
 	go func() {
 		log.Printf("Server starting on %s", server.Addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
@@ -99,7 +105,7 @@ func initRedis(cfg *config.Config) *redis.Client {
 	})
 }
 
-func setupRoutes(healthHandler *handler.HealthHandler) *mux.Router {
+func setupRoutes(billingHandler *handler.BillingHandler, healthHandler *handler.HealthHandler) *mux.Router {
 	router := mux.NewRouter()
 
 	// Health check

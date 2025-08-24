@@ -1,13 +1,42 @@
 package domain
 
-import "time"
+import (
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+)
+
+// Loan represents a loan entity
 type Loan struct {
-	ID            string
-	Amount        float64 `json:"amount"`
-	InterestRate  float64 `json:"interest_rate"`
-	WeeklyPayment float64 `json:"weekly_payment"`
-	Schedule      []PaymentSchedule
-	Payments      []Payment
-	CreatedAt     time.Time
+	ID            uuid.UUID       `json:"id" db:"id"`
+	LoanID        string          `json:"loan_id" db:"loan_id"`
+	Amount        decimal.Decimal `json:"amount" db:"amount"`
+	InterestRate  decimal.Decimal `json:"interest_rate" db:"interest_rate"`
+	DurationWeeks int             `json:"duration_weeks" db:"duration_weeks"`
+	WeeklyPayment decimal.Decimal `json:"weekly_payment" db:"weekly_payment"`
+	Status        string          `json:"status" db:"status"`
+	CreatedAt     time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at" db:"updated_at"`
+}
+
+// DTOs for requests and responses
+
+type CreateLoanRequest struct {
+	LoanID string `json:"loan_id" validate:"required"`
+}
+
+type CreateLoanResponse struct {
+	Loan     *Loan           `json:"loan"`
+	Schedule []*LoanSchedule `json:"schedule"`
+}
+type OutstandingResponse struct {
+	LoanID      string          `json:"loan_id"`
+	Outstanding decimal.Decimal `json:"outstanding"`
+}
+
+type DelinquentResponse struct {
+	LoanID       string `json:"loan_id"`
+	IsDelinquent bool   `json:"is_delinquent"`
+	MissedWeeks  int    `json:"missed_weeks"`
 }

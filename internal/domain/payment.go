@@ -1,19 +1,29 @@
 package domain
 
+import (
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+)
+
+// Payment represents a payment made by a borrower
 type Payment struct {
-	ID      string  `json:"id"`
-	LoanID  string  `json:"loan_id"`
-	Amount  float64 `json:"amount"`
-	DueDate string  `json:"due_date"`
-	Paid    bool    `json:"paid"`
+	ID          uuid.UUID       `json:"id" db:"id"`
+	LoanID      string          `json:"loan_id" db:"loan_id"`
+	Amount      decimal.Decimal `json:"amount" db:"amount"`
+	PaymentDate time.Time       `json:"payment_date" db:"payment_date"`
+	WeekNumber  int             `json:"week_number" db:"week_number"`
+	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
 }
 
-type PaymentSchedule struct {
-	WeekNumber int     `json:"week_number"`
-	AmountDue  float64 `json:"amount_due"`
-	DueDate    string  `json:"due_date"`
+type MakePaymentRequest struct {
+	Amount decimal.Decimal `json:"amount" validate:"required,gt=0"`
 }
 
-func (Payment) TableName() string {
-	return "payments"
+type MakePaymentResponse struct {
+	Payment        *Payment        `json:"payment"`
+	Outstanding    decimal.Decimal `json:"outstanding"`
+	IsDelinquent   bool            `json:"is_delinquent"`
+	PaidWeekNumber int             `json:"paid_week_number"`
 }
