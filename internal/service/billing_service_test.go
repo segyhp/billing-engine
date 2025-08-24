@@ -45,3 +45,41 @@ func TestCreateLoan_Success(t *testing.T) {
 
 	mockLoanRepo.AssertExpectations(t)
 }
+
+func TestGetOutstanding_Success(t *testing.T) {
+	mockLoanRepo := &mocks.MockLoanRepository{}
+	mockPaymentRepo := &mocks.MockPaymentRepository{}
+
+	service := &BillingService{
+		loanRepo:    mockLoanRepo,
+		paymentRepo: mockPaymentRepo,
+	}
+
+	loanID := "LOAN123"
+	loan := &domain.Loan{
+		LoanID:        loanID,
+		Amount:        decimal.NewFromInt(5000000),
+		InterestRate:  decimal.NewFromFloat(0.10),
+		DurationWeeks: 50,
+		WeeklyPayment: decimal.NewFromInt(110000),
+		Status:        "ACTIVE",
+	}
+
+	payments := []*domain.Payment{
+		{LoanID: loanID, Amount: decimal.NewFromInt(110000)},
+		{LoanID: loanID, Amount: decimal.NewFromInt(110000)},
+	}
+
+	mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+	mockPaymentRepo.On("GetByLoanID", mock.Anything, loanID).Return(payments, nil)
+
+	// Act
+	outstanding, err := service.GetOutstanding(context.Background(), loanID)
+
+	// Assert
+	assert.NoError(t, err)
+	assert.True(t, outstanding.Equal(decimal.NewFromInt(4780000))) // 5000000 + 500000 - 220000
+
+	mockLoanRepo.AssertExpectations(t)
+	mockPaymentRepo.AssertExpectations(t)
+}
