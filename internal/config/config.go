@@ -4,163 +4,144 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/shopspring/decimal"
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
-// Config holds all configuration for our application
 type Config struct {
-	Server    ServerConfig    `mapstructure:"server"`
-	Database  DatabaseConfig  `mapstructure:"database"`
-	Redis     RedisConfig     `mapstructure:"redis"`
-	Scheduler SchedulerConfig `mapstructure:"scheduler"`
-	Logging   LoggingConfig   `mapstructure:"logging"`
-	Business  BusinessConfig  `mapstructure:"business"`
-	Health    HealthConfig    `mapstructure:"health"`
+	Server   ServerConfig   `mapstructure:"server"`
+	Database DatabaseConfig `mapstructure:"database"`
+	Redis    RedisConfig    `mapstructure:"redis"`
+	App      AppConfig      `mapstructure:"app"`
 }
 
 type ServerConfig struct {
-	Port string `mapstructure:"SERVER_PORT"`
-	Host string `mapstructure:"SERVER_HOST"`
-	Env  string `mapstructure:"ENV"`
+	Host         string        `mapstructure:"host"`
+	Port         string        `mapstructure:"port"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout"`
 }
 
 type DatabaseConfig struct {
-	URL      string `mapstructure:"DATABASE_URL"`
-	Host     string `mapstructure:"DATABASE_HOST"`
-	Port     string `mapstructure:"DATABASE_PORT"`
-	Name     string `mapstructure:"DATABASE_NAME"`
-	User     string `mapstructure:"DATABASE_USER"`
-	Password string `mapstructure:"DATABASE_PASSWORD"`
+	Host            string        `mapstructure:"host"`
+	Port            string        `mapstructure:"port"`
+	User            string        `mapstructure:"user"`
+	Password        string        `mapstructure:"password"`
+	Name            string        `mapstructure:"name"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
 }
 
 type RedisConfig struct {
-	URL      string `mapstructure:"REDIS_URL"`
-	Host     string `mapstructure:"REDIS_HOST"`
-	Port     string `mapstructure:"REDIS_PORT"`
-	Password string `mapstructure:"REDIS_PASSWORD"`
+	Host     string `mapstructure:"host"`
+	Port     string `mapstructure:"port"`
+	Password string `mapstructure:"password"`
+	DB       int    `mapstructure:"db"`
 }
 
-type SchedulerConfig struct {
-	Interval string `mapstructure:"SCHEDULER_INTERVAL"`
-	Timezone string `mapstructure:"SCHEDULER_TIMEZONE"`
+type AppConfig struct {
+	Environment              string  `mapstructure:"environment"`
+	LogLevel                 string  `mapstructure:"log_level"`
+	LoanAmount               float64 `mapstructure:"loan_amount"`
+	LoanDurationWeeks        int     `mapstructure:"loan_duration_weeks"`
+	AnnualInterestRate       float64 `mapstructure:"annual_interest_rate"`
+	DelinquentWeeksThreshold int     `mapstructure:"delinquent_weeks_threshold"`
 }
 
-type LoggingConfig struct {
-	Level  string `mapstructure:"LOG_LEVEL"`
-	Format string `mapstructure:"LOG_FORMAT"`
-}
-
-type BusinessConfig struct {
-	DefaultInterestRate  string `mapstructure:"DEFAULT_INTEREST_RATE"`
-	DefaultLoanWeeks     int    `mapstructure:"DEFAULT_LOAN_WEEKS"`
-	DelinquencyThreshold int    `mapstructure:"DELINQUENCY_THRESHOLD"`
-}
-
-type HealthConfig struct {
-	Timeout string `mapstructure:"HEALTH_CHECK_TIMEOUT"`
-}
-
-// Load reads configuration from environment variables and files
 func Load() (*Config, error) {
-	// Set defaults
-	viper.SetDefault("SERVER_PORT", "8080")
-	viper.SetDefault("SERVER_HOST", "0.0.0.0")
-	viper.SetDefault("ENV", "development")
-	viper.SetDefault("LOG_LEVEL", "info")
-	viper.SetDefault("LOG_FORMAT", "json")
-	viper.SetDefault("DEFAULT_INTEREST_RATE", "0.10")
-	viper.SetDefault("DEFAULT_LOAN_WEEKS", 50)
-	viper.SetDefault("DELINQUENCY_THRESHOLD", 2)
-	viper.SetDefault("SCHEDULER_INTERVAL", "24h")
-	viper.SetDefault("SCHEDULER_TIMEZONE", "Asia/Jakarta")
-	viper.SetDefault("HEALTH_CHECK_TIMEOUT", "5s")
+	// Load .env file if it exists
+	_ = godotenv.Load()
 
-	// Read from environment variables
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+	viper.AddConfigPath("./config")
+
+	// Set defaults
+	setDefaults()
+
+	// Bind environment variables
+	bindEnvVars()
+
 	viper.AutomaticEnv()
 
-	// Try to read from .env file (optional)
-	viper.SetConfigName(".env")
-	viper.SetConfigType("env")
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("./deployments")
-
-	// Don't fail if .env file doesn't exist
+	// Try to read config file, but don't fail if it doesn't exist
 	_ = viper.ReadInConfig()
 
-	var config Config
-	if err := viper.Unmarshal(&config); err != nil {
-		return nil, fmt.Errorf("unable to decode config: %w", err)
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
-	// Validate configuration
-	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	return &config, nil
+	return &cfg, nil
 }
 
-// Validate checks if the configuration is valid
-func (c *Config) Validate() error {
-	if c.Server.Port == "" {
-		return fmt.Errorf("SERVER_PORT is required")
-	}
+func setDefaults() {
+	// Server defaults
+	viper.SetDefault("server.host", "localhost")
+	viper.SetDefault("server.port", "8080")
+	viper.SetDefault("server.read_timeout", "30s")
+	viper.SetDefault("server.write_timeout", "30s")
 
-	if c.Database.URL == "" {
-		return fmt.Errorf("DATABASE_URL is required")
-	}
+	// Database defaults
+	viper.SetDefault("database.host", "localhost")
+	viper.SetDefault("database.port", "5432")
+	viper.SetDefault("database.user", "billing_user")
+	viper.SetDefault("database.password", "billing_pass")
+	viper.SetDefault("database.name", "billing_engine")
+	viper.SetDefault("database.max_open_conns", 25)
+	viper.SetDefault("database.max_idle_conns", 5)
+	viper.SetDefault("database.conn_max_lifetime", "300s")
 
-	if c.Business.DefaultLoanWeeks <= 0 {
-		return fmt.Errorf("DEFAULT_LOAN_WEEKS must be greater than 0")
-	}
+	// Redis defaults
+	viper.SetDefault("redis.host", "localhost")
+	viper.SetDefault("redis.port", "6379")
+	viper.SetDefault("redis.password", "")
+	viper.SetDefault("redis.db", 0)
 
-	if c.Business.DelinquencyThreshold <= 0 {
-		return fmt.Errorf("DELINQUENCY_THRESHOLD must be greater than 0")
-	}
-
-	// Validate interest rate
-	if _, err := decimal.NewFromString(c.Business.DefaultInterestRate); err != nil {
-		return fmt.Errorf("DEFAULT_INTEREST_RATE must be a valid decimal: %w", err)
-	}
-
-	// Validate scheduler interval
-	if _, err := time.ParseDuration(c.Scheduler.Interval); err != nil {
-		return fmt.Errorf("SCHEDULER_INTERVAL must be a valid duration: %w", err)
-	}
-
-	// Validate health check timeout
-	if _, err := time.ParseDuration(c.Health.Timeout); err != nil {
-		return fmt.Errorf("HEALTH_CHECK_TIMEOUT must be a valid duration: %w", err)
-	}
-
-	return nil
+	// App defaults
+	viper.SetDefault("app.environment", "development")
+	viper.SetDefault("app.log_level", "debug")
+	viper.SetDefault("app.loan_amount", 5000000.0)
+	viper.SetDefault("app.loan_duration_weeks", 50)
+	viper.SetDefault("app.annual_interest_rate", 0.10)
+	viper.SetDefault("app.delinquent_weeks_threshold", 2)
 }
 
-// IsDevelopment returns true if running in development environment
-func (c *Config) IsDevelopment() bool {
-	return c.Server.Env == "development" || c.Server.Env == "dev"
+func bindEnvVars() {
+	// Server
+	viper.BindEnv("server.host", "SERVER_HOST")
+	viper.BindEnv("server.port", "SERVER_PORT")
+	viper.BindEnv("server.read_timeout", "SERVER_READ_TIMEOUT")
+	viper.BindEnv("server.write_timeout", "SERVER_WRITE_TIMEOUT")
+
+	// Database
+	viper.BindEnv("database.host", "DB_HOST")
+	viper.BindEnv("database.port", "DB_PORT")
+	viper.BindEnv("database.user", "DB_USER")
+	viper.BindEnv("database.password", "DB_PASSWORD")
+	viper.BindEnv("database.name", "DB_NAME")
+	viper.BindEnv("database.max_open_conns", "DB_MAX_OPEN_CONNS")
+	viper.BindEnv("database.max_idle_conns", "DB_MAX_IDLE_CONNS")
+	viper.BindEnv("database.conn_max_lifetime", "DB_CONN_MAX_LIFETIME")
+
+	// Redis
+	viper.BindEnv("redis.host", "REDIS_HOST")
+	viper.BindEnv("redis.port", "REDIS_PORT")
+	viper.BindEnv("redis.password", "REDIS_PASSWORD")
+	viper.BindEnv("redis.db", "REDIS_DB")
+
+	// App
+	viper.BindEnv("app.environment", "APP_ENV")
+	viper.BindEnv("app.log_level", "LOG_LEVEL")
+	viper.BindEnv("app.loan_amount", "LOAN_AMOUNT")
+	viper.BindEnv("app.loan_duration_weeks", "LOAN_DURATION_WEEKS")
+	viper.BindEnv("app.annual_interest_rate", "ANNUAL_INTEREST_RATE")
+	viper.BindEnv("app.delinquent_weeks_threshold", "DELINQUENT_WEEKS_THRESHOLD")
 }
 
-// IsProduction returns true if running in production environment
-func (c *Config) IsProduction() bool {
-	return c.Server.Env == "production" || c.Server.Env == "prod"
-}
-
-// GetDefaultInterestRate returns the default interest rate as decimal
-func (c *Config) GetDefaultInterestRate() decimal.Decimal {
-	rate, _ := decimal.NewFromString(c.Business.DefaultInterestRate)
-	return rate
-}
-
-// GetSchedulerInterval returns the scheduler interval as duration
-func (c *Config) GetSchedulerInterval() time.Duration {
-	duration, _ := time.ParseDuration(c.Scheduler.Interval)
-	return duration
-}
-
-// GetHealthTimeout returns the health check timeout as duration
-func (c *Config) GetHealthTimeout() time.Duration {
-	timeout, _ := time.ParseDuration(c.Health.Timeout)
-	return timeout
+func (d *DatabaseConfig) DSN() string {
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		d.Host, d.Port, d.User, d.Password, d.Name)
 }
