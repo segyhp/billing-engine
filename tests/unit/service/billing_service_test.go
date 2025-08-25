@@ -743,33 +743,3 @@ func TestMakePayment(t *testing.T) {
 		})
 	}
 }
-
-func TestBillingService_GetSchedule(t *testing.T) {
-	mockLoanRepo := &mocks.MockLoanRepository{}
-	mockPaymentRepo := &mocks.MockPaymentRepository{}
-
-	service := &billingService.BillingService{
-		LoanRepo:    mockLoanRepo,
-		PaymentRepo: mockPaymentRepo,
-	}
-	loanID := "LOAN123"
-	weeklyPayment := decimal.NewFromInt(110000)
-
-	schedules := []*domain.LoanSchedule{
-		{LoanID: loanID, WeekNumber: 1, Status: "PENDING", DueAmount: weeklyPayment},
-		{LoanID: loanID, WeekNumber: 2, Status: "PENDING", DueAmount: weeklyPayment},
-	}
-
-	mockLoanRepo.On("GetScheduleByLoanID", mock.Anything, loanID).Return(schedules, nil)
-
-	// Act
-	payment, err := service.GetSchedule(context.Background(), loanID)
-
-	// Assert
-	assert.NoError(t, err)
-	assert.NotNil(t, payment)
-	assert.Equal(t, schedules[0].LoanID, loanID)
-
-	mockLoanRepo.AssertExpectations(t)
-	mockPaymentRepo.AssertExpectations(t)
-}

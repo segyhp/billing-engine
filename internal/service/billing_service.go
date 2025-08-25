@@ -25,6 +25,13 @@ type BillingService struct {
 	config      *config.Config
 }
 
+type BillingServiceInterface interface {
+	CreateLoan(ctx context.Context, request *domain.CreateLoanRequest) (*domain.Loan, []*domain.LoanSchedule, error)
+	GetOutstanding(ctx context.Context, loanID string) (decimal.Decimal, error)
+	IsDelinquent(ctx context.Context, loanID string) (bool, error)
+	MakePayment(ctx context.Context, request domain.MakePaymentRequest) (*domain.Payment, error)
+}
+
 func NewBillingService(
 	loanRepo repository.LoanRepository,
 	paymentRepo repository.PaymentRepository,
@@ -202,7 +209,6 @@ func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool,
 }
 
 // MakePayment processes a payment for a loan
-// MakePayment processes a payment for a loan
 func (s *BillingService) MakePayment(ctx context.Context, request domain.MakePaymentRequest) (*domain.Payment, error) {
 	// 1. Validate payment amount
 	if request.Amount.LessThanOrEqual(decimal.Zero) {
@@ -288,15 +294,4 @@ func (s *BillingService) MakePayment(ctx context.Context, request domain.MakePay
 	}
 
 	return payment, nil
-}
-
-// Helper function to calculate current week number from loan start date
-func (s *BillingService) getCurrentWeekFromLoanStart(startDate, currentDate time.Time) int {
-	if currentDate.Before(startDate) {
-		return 0
-	}
-
-	duration := currentDate.Sub(startDate)
-	weeks := int(duration.Hours() / (24 * 7)) // Convert to weeks
-	return weeks + 1                          // Week 1 starts from loan start date
 }
