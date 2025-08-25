@@ -147,24 +147,42 @@ func (h *BillingHandler) MakePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set the loan ID from URL params
+	req.LoanID = loanID
+
 	if err := h.validator.Struct(&req); err != nil {
 		response.BadRequest(w, "Validation failed", err)
 		return
 	}
 
-	// TODO: Implement payment processing logic
-	// payment, err := h.service.MakePayment(r.Context(), loanID, req.Amount)
-	// if err != nil {
-	// 	response.InternalServerError(w, "Failed to process payment", err)
-	// 	return
-	// }
+	payment, err := h.service.MakePayment(r.Context(), req)
+	if err != nil {
+		response.InternalServerError(w, "Failed to process payment", err)
+		return
+	}
 
-	// For now, return a placeholder response
-	response.Success(w, map[string]interface{}{
-		"message": "MakePayment endpoint - TODO: Implement business logic",
-		"loan_id": loanID,
-		"amount":  req.Amount,
-	})
+	// Get updated outstanding balance after payment
+	outstanding, err := h.service.GetOutstanding(r.Context(), loanID)
+	if err != nil {
+		response.InternalServerError(w, "Failed to get outstanding balance", err)
+		return
+	}
+
+	// Check if borrower is still delinquent after payment
+	isDelinquent, err := h.service.IsDelinquent(r.Context(), loanID)
+	if err != nil {
+		response.InternalServerError(w, "Failed to check delinquency status", err)
+		return
+	}
+
+	responseData := domain.MakePaymentResponse{
+		Payment:        payment,
+		Outstanding:    outstanding,
+		IsDelinquent:   isDelinquent,
+		PaidWeekNumber: payment.WeekNumber,
+	}
+
+	response.Success(w, responseData)
 }
 
 // validateDecimalGt validates that decimal is greater than the parameter

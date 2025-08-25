@@ -505,3 +505,219 @@ func TestBillingHandler_IsDelinquent(t *testing.T) {
 		})
 	}
 }
+
+func TestBillingHandler_MakePayment(t *testing.T) {
+	cfg := &config.Config{
+		App: config.AppConfig{
+			LoanAmount:         1000.0,
+			LoanDurationWeeks:  50,
+			AnnualInterestRate: 10.0,
+		},
+	}
+
+	tests := []struct {
+		name           string
+		loanID         string
+		requestBody    interface{}
+		setupMock      func(*mocks.MockBillingService)
+		expectedStatus int
+		expectedBody   string
+		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:   "successful payment processing",
+			loanID: "loan123",
+			requestBody: domain.MakePaymentRequest{
+				Amount: decimal.NewFromFloat(23.0),
+			},
+			setupMock: func(mockService *mocks.MockBillingService) {
+				expectedPayment := &domain.Payment{
+					ID:          uuid.New(),
+					LoanID:      "loan123",
+					Amount:      decimal.NewFromFloat(23.0),
+					PaymentDate: time.Now(),
+					WeekNumber:  1,
+					CreatedAt:   time.Now(),
+				}
+
+				mockService.On("MakePayment", mock.Anything, mock.MatchedBy(func(req domain.MakePaymentRequest) bool {
+					return req.LoanID == "loan123" && req.Amount.Equal(decimal.NewFromFloat(23.0))
+				})).Return(expectedPayment, nil).Once()
+
+				mockService.On("GetOutstanding", mock.Anything, "loan123").
+					Return(decimal.NewFromFloat(977.0), nil).Once()
+
+				mockService.On("IsDelinquent", mock.Anything, "loan123").
+					Return(false, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var wrapperResponse struct {
+					Success   bool                       `json:"success"`
+					Data      domain.MakePaymentResponse `json:"data"`
+					Timestamp time.Time                  `json:"timestamp"`
+				}
+				err := json.Unmarshal(w.Body.Bytes(), &wrapperResponse)
+				assert.NoError(t, err)
+
+				response := wrapperResponse.Data
+				assert.NotNil(t, response.Payment)
+				assert.Equal(t, "loan123", response.Payment.LoanID)
+				assert.True(t, response.Payment.Amount.Equal(decimal.NewFromFloat(23.0)))
+				assert.Equal(t, 1, response.Payment.WeekNumber)
+				assert.True(t, response.Outstanding.Equal(decimal.NewFromFloat(977.0)))
+				assert.False(t, response.IsDelinquent)
+				assert.Equal(t, 1, response.PaidWeekNumber)
+			},
+		},
+		{
+			name:   "successful payment - loan becomes fully paid",
+			loanID: "loan456",
+			requestBody: domain.MakePaymentRequest{
+				Amount: decimal.NewFromFloat(23.0),
+			},
+			setupMock: func(mockService *mocks.MockBillingService) {
+				expectedPayment := &domain.Payment{
+					ID:          uuid.New(),
+					LoanID:      "loan456",
+					Amount:      decimal.NewFromFloat(23.0),
+					PaymentDate: time.Now(),
+					WeekNumber:  50,
+					CreatedAt:   time.Now(),
+				}
+
+				mockService.On("MakePayment", mock.Anything, mock.MatchedBy(func(req domain.MakePaymentRequest) bool {
+					return req.LoanID == "loan456" && req.Amount.Equal(decimal.NewFromFloat(23.0))
+				})).Return(expectedPayment, nil).Once()
+
+				mockService.On("GetOutstanding", mock.Anything, "loan456").
+					Return(decimal.Zero, nil).Once()
+
+				mockService.On("IsDelinquent", mock.Anything, "loan456").
+					Return(false, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var wrapperResponse struct {
+					Success   bool                       `json:"success"`
+					Data      domain.MakePaymentResponse `json:"data"`
+					Timestamp time.Time                  `json:"timestamp"`
+				}
+				err := json.Unmarshal(w.Body.Bytes(), &wrapperResponse)
+				assert.NoError(t, err)
+
+				response := wrapperResponse.Data
+				assert.True(t, response.Outstanding.Equal(decimal.Zero))
+				assert.Equal(t, 50, response.PaidWeekNumber)
+			},
+		},
+		{
+			name:           "invalid JSON payload",
+			loanID:         "loan123",
+			requestBody:    "invalid json",
+			setupMock:      func(mockService *mocks.MockBillingService) {},
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Invalid JSON payload",
+		},
+		{
+			name:   "validation error - zero amount",
+			loanID: "loan123",
+			requestBody: domain.MakePaymentRequest{
+				Amount: decimal.Zero,
+			},
+			setupMock:      func(mockService *mocks.MockBillingService) {},
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Validation failed",
+		},
+		{
+			name:           "missing loan ID",
+			loanID:         "",
+			requestBody:    domain.MakePaymentRequest{Amount: decimal.NewFromFloat(23.0)},
+			setupMock:      func(mockService *mocks.MockBillingService) {},
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Loan ID is required",
+		},
+		{
+			name:   "service error - loan not found",
+			loanID: "nonexistent",
+			requestBody: domain.MakePaymentRequest{
+				Amount: decimal.NewFromFloat(23.0),
+			},
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("MakePayment", mock.Anything, mock.MatchedBy(func(req domain.MakePaymentRequest) bool {
+					return req.LoanID == "nonexistent"
+				})).Return((*domain.Payment)(nil), assert.AnError).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "Failed to process payment",
+		},
+		{
+			name:   "service error - invalid payment amount",
+			loanID: "loan789",
+			requestBody: domain.MakePaymentRequest{
+				Amount: decimal.NewFromFloat(50.0), // Wrong amount
+			},
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("MakePayment", mock.Anything, mock.MatchedBy(func(req domain.MakePaymentRequest) bool {
+					return req.LoanID == "loan789"
+				})).Return((*domain.Payment)(nil), assert.AnError).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "Failed to process payment",
+		},
+		{
+			name:   "service error - loan already closed",
+			loanID: "closed_loan",
+			requestBody: domain.MakePaymentRequest{
+				Amount: decimal.NewFromFloat(23.0),
+			},
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("MakePayment", mock.Anything, mock.MatchedBy(func(req domain.MakePaymentRequest) bool {
+					return req.LoanID == "closed_loan"
+				})).Return((*domain.Payment)(nil), assert.AnError).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "Failed to process payment",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := mocks.NewMockBillingService()
+			tt.setupMock(mockService)
+
+			billingHandler := handler.NewBillingHandler(mockService, cfg)
+
+			// Create request body
+			var body bytes.Buffer
+			if str, ok := tt.requestBody.(string); ok {
+				body.WriteString(str)
+			} else {
+				json.NewEncoder(&body).Encode(tt.requestBody)
+			}
+
+			// Create request with loan ID in URL path
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/loans/"+tt.loanID+"/payments", &body)
+			req.Header.Set("Content-Type", "application/json")
+
+			// Set up mux vars to simulate the router
+			req = mux.SetURLVars(req, map[string]string{"loanId": tt.loanID})
+
+			w := httptest.NewRecorder()
+
+			billingHandler.MakePayment(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			if tt.expectedBody != "" {
+				assert.Contains(t, w.Body.String(), tt.expectedBody)
+			}
+
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+
+			mockService.AssertExpectations(t)
+		})
+	}
+}
