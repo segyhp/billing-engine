@@ -133,10 +133,7 @@ func TestCreateLoan(t *testing.T) {
 			mockLoanRepo := &mocks.MockLoanRepository{}
 			mockPaymentRepo := &mocks.MockPaymentRepository{}
 
-			service := &billingService.BillingService{
-				LoanRepo:    mockLoanRepo,
-				PaymentRepo: mockPaymentRepo,
-			}
+			service := billingService.NewBillingService(mockLoanRepo, mockPaymentRepo, nil, nil)
 
 			tt.setupMocks(mockLoanRepo, mockPaymentRepo, tt.loanID)
 
@@ -296,10 +293,7 @@ func TestGetOutstanding(t *testing.T) {
 			mockLoanRepo := &mocks.MockLoanRepository{}
 			mockPaymentRepo := &mocks.MockPaymentRepository{}
 
-			service := &billingService.BillingService{
-				LoanRepo:    mockLoanRepo,
-				PaymentRepo: mockPaymentRepo,
-			}
+			service := billingService.NewBillingService(mockLoanRepo, mockPaymentRepo, nil, nil)
 
 			tt.setupMocks(mockLoanRepo, mockPaymentRepo, tt.loanID)
 
@@ -488,10 +482,7 @@ func TestIsDelinquent(t *testing.T) {
 			mockLoanRepo := &mocks.MockLoanRepository{}
 			mockPaymentRepo := &mocks.MockPaymentRepository{}
 
-			service := &billingService.BillingService{
-				LoanRepo:    mockLoanRepo,
-				PaymentRepo: mockPaymentRepo,
-			}
+			service := billingService.NewBillingService(mockLoanRepo, mockPaymentRepo, nil, nil)
 
 			tt.setupMocks(mockLoanRepo, mockPaymentRepo, tt.loanID)
 
@@ -717,10 +708,7 @@ func TestMakePayment(t *testing.T) {
 			mockLoanRepo := &mocks.MockLoanRepository{}
 			mockPaymentRepo := &mocks.MockPaymentRepository{}
 
-			service := &billingService.BillingService{
-				LoanRepo:    mockLoanRepo,
-				PaymentRepo: mockPaymentRepo,
-			}
+			service := billingService.NewBillingService(mockLoanRepo, mockPaymentRepo, nil, nil)
 
 			tt.setupMocks(mockLoanRepo, mockPaymentRepo, tt.request.LoanID)
 
