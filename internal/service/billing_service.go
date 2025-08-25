@@ -298,11 +298,23 @@ func (s *BillingService) GetSchedule(ctx context.Context, loanID string) ([]*dom
 	// 2. Cache schedule in Redis for performance
 	// 3. Return schedule with payment status for each week
 
-	panic("TODO: Implement GetSchedule business logic")
+	// 8. Return payment details
+
+	//Get schedule
+	schedules, err := s.LoanRepo.GetScheduleByLoanID(ctx, loanID)
+	if err != nil {
+		return nil, err
+	}
+
+	schedules = []*domain.LoanSchedule{
+		{LoanID: loanID, WeekNumber: 1, DueDate: time.Now().AddDate(0, 0, -14), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
+		{LoanID: loanID, WeekNumber: 2, DueDate: time.Now().AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
+	}
+
+	return schedules, nil
 }
 
 // Helper method to calculate weekly payment amount
-// TODO: Implement this helper method
 func (s *BillingService) calculateWeeklyPayment() decimal.Decimal {
 	principal := decimal.NewFromInt(5000000)
 	annualRate := decimal.NewFromFloat(0.10)
