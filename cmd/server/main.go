@@ -44,8 +44,7 @@ func main() {
 
 	//Initialize service
 	billingService := service.NewBillingService(loanRepo, paymentRepo, redisClient, cfg)
-
-	billingHandler := handler.NewBillingHandler(billingService)
+	billingHandler := handler.NewBillingHandler(billingService, cfg)
 	healthHandler := handler.NewHealthHandler(db, redisClient)
 
 	// Setup routes
@@ -111,6 +110,14 @@ func setupRoutes(billingHandler *handler.BillingHandler, healthHandler *handler.
 	// Health check
 	router.HandleFunc("/health", healthHandler.Health).Methods("GET")
 	router.HandleFunc("/health/ready", healthHandler.Ready).Methods("GET")
+
+	/// API routes
+	api := router.PathPrefix("/api/v1").Subrouter()
+
+	api.HandleFunc("/loans", billingHandler.CreateLoan).Methods("POST")
+	api.HandleFunc("/loans/{loanId}/outstanding", billingHandler.GetOutstanding).Methods("GET")
+	api.HandleFunc("/loans/{loanId}/delinquent", billingHandler.IsDelinquent).Methods("GET")
+	api.HandleFunc("/loans/{loanId}/payment", billingHandler.MakePayment).Methods("POST")
 
 	return router
 }
