@@ -18,14 +18,14 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type BillingService struct {
+type billingService struct {
 	LoanRepo    repository.LoanRepository
 	PaymentRepo repository.PaymentRepository
 	redis       *redis.Client
 	config      *config.Config
 }
 
-type BillingServiceInterface interface {
+type BillingService interface {
 	CreateLoan(ctx context.Context, request *domain.CreateLoanRequest) (*domain.Loan, []*domain.LoanSchedule, error)
 	GetOutstanding(ctx context.Context, loanID string) (decimal.Decimal, error)
 	IsDelinquent(ctx context.Context, loanID string) (bool, error)
@@ -37,8 +37,8 @@ func NewBillingService(
 	paymentRepo repository.PaymentRepository,
 	redis *redis.Client,
 	config *config.Config,
-) *BillingService {
-	return &BillingService{
+) BillingService {
+	return &billingService{
 		LoanRepo:    loanRepo,
 		PaymentRepo: paymentRepo,
 		redis:       redis,
@@ -47,7 +47,7 @@ func NewBillingService(
 }
 
 // CreateLoan creates a new loan with payment schedule
-func (s *BillingService) CreateLoan(ctx context.Context, request *domain.CreateLoanRequest) (*domain.Loan, []*domain.LoanSchedule, error) {
+func (s *billingService) CreateLoan(ctx context.Context, request *domain.CreateLoanRequest) (*domain.Loan, []*domain.LoanSchedule, error) {
 	// Check if loan already exists
 	existingLoan, err := s.LoanRepo.GetByLoanID(ctx, request.LoanID)
 	if err == nil && existingLoan != nil {
@@ -122,7 +122,7 @@ func (s *BillingService) CreateLoan(ctx context.Context, request *domain.CreateL
 }
 
 // GetOutstanding calculates and returns the outstanding balance for a loan
-func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (decimal.Decimal, error) {
+func (s *billingService) GetOutstanding(ctx context.Context, loanID string) (decimal.Decimal, error) {
 	// Get loan details
 	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
@@ -152,7 +152,7 @@ func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (dec
 }
 
 // IsDelinquent checks if a borrower is delinquent (missed 2+ consecutive payments)
-func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool, error) {
+func (s *billingService) IsDelinquent(ctx context.Context, loanID string) (bool, error) {
 	// Get loan details
 	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
@@ -209,7 +209,7 @@ func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool,
 }
 
 // MakePayment processes a payment for a loan
-func (s *BillingService) MakePayment(ctx context.Context, request domain.MakePaymentRequest) (*domain.Payment, error) {
+func (s *billingService) MakePayment(ctx context.Context, request domain.MakePaymentRequest) (*domain.Payment, error) {
 	// 1. Validate payment amount
 	if request.Amount.LessThanOrEqual(decimal.Zero) {
 		invalidAmount, _ := request.Amount.Float64()

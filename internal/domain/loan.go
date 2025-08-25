@@ -30,8 +30,8 @@ type Loan struct {
 
 type CreateLoanRequest struct {
 	LoanID        string          `json:"loan_id" validate:"required"`
-	Amount        decimal.Decimal `json:"amount" validate:"required,gt=0"`
-	InterestRate  decimal.Decimal `json:"interest_rate" validate:"required,gte=0"`
+	Amount        decimal.Decimal `json:"amount" validate:"required,decimal_gt=0"`
+	InterestRate  decimal.Decimal `json:"interest_rate" validate:"required,decimal_gte=0"`
 	DurationWeeks int             `json:"duration_weeks" validate:"required,gt=0"`
 }
 
