@@ -9,10 +9,6 @@ import (
 
 // Business logic constants
 const (
-	LoanStatusActive  = "active"
-	LoanStatusClosed  = "closed"
-	LoanStatusDefault = "default"
-
 	ScheduleStatusPending = "pending"
 	ScheduleStatusPaid    = "paid"
 	ScheduleStatusOverdue = "overdue"

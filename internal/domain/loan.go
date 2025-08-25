@@ -7,6 +7,12 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const (
+	LoanStatusActive  = "active"
+	LoanStatusClosed  = "closed"
+	LoanStatusDefault = "default"
+)
+
 // Loan represents a loan entity
 type Loan struct {
 	ID            uuid.UUID       `json:"id" db:"id"`
@@ -23,13 +29,17 @@ type Loan struct {
 // DTOs for requests and responses
 
 type CreateLoanRequest struct {
-	LoanID string `json:"loan_id" validate:"required"`
+	LoanID        string          `json:"loan_id" validate:"required"`
+	Amount        decimal.Decimal `json:"amount" validate:"required,gt=0"`
+	InterestRate  decimal.Decimal `json:"interest_rate" validate:"required,gte=0"`
+	DurationWeeks int             `json:"duration_weeks" validate:"required,gt=0"`
 }
 
 type CreateLoanResponse struct {
 	Loan     *Loan           `json:"loan"`
 	Schedule []*LoanSchedule `json:"schedule"`
 }
+
 type OutstandingResponse struct {
 	LoanID      string          `json:"loan_id"`
 	Outstanding decimal.Decimal `json:"outstanding"`

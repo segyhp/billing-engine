@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,38 +16,153 @@ import (
 	"github.com/segyhp/billing-engine/tests/mocks"
 )
 
-func TestCreateLoan_Success(t *testing.T) {
-	// Arrange
-	mockLoanRepo := &mocks.MockLoanRepository{}
-	mockPaymentRepo := &mocks.MockPaymentRepository{}
-
-	service := &billingService.BillingService{
-		LoanRepo:    mockLoanRepo,
-		PaymentRepo: mockPaymentRepo,
-		// config with: Amount: 5000000, Rate: 0.10, Duration: 50
+func TestCreateLoan(t *testing.T) {
+	tests := []struct {
+		name           string
+		loanID         string
+		amount         decimal.Decimal
+		interestRate   decimal.Decimal
+		durationWeeks  int
+		setupMocks     func(*mocks.MockLoanRepository, *mocks.MockPaymentRepository, string)
+		expectedError  bool
+		errorContains  string
+		validateResult func(*testing.T, *domain.Loan, []*domain.LoanSchedule)
+	}{
+		{
+			name:          "Success - Create new loan",
+			loanID:        "LOAN123",
+			amount:        decimal.NewFromFloat(5000000),
+			interestRate:  decimal.NewFromFloat(0.10),
+			durationWeeks: 50,
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(nil, sql.ErrNoRows)
+				mockLoanRepo.On("Create", mock.Anything, mock.MatchedBy(func(loan *domain.Loan) bool {
+					return loan.LoanID == loanID
+				})).Return(nil)
+				mockLoanRepo.On("CreateSchedule", mock.Anything, mock.MatchedBy(func(schedules []*domain.LoanSchedule) bool {
+					return len(schedules) == 50
+				})).Return(nil)
+			},
+			expectedError: false,
+			validateResult: func(t *testing.T, loan *domain.Loan, schedule []*domain.LoanSchedule) {
+				assert.Equal(t, "LOAN123", loan.LoanID)
+				assert.Equal(t, 50, len(schedule))
+				assert.True(t, loan.WeeklyPayment.Equal(decimal.NewFromInt(110000)))
+			},
+		},
+		{
+			name:          "Failure - Loan already exists",
+			loanID:        "LOAN456",
+			amount:        decimal.NewFromFloat(5000000),
+			interestRate:  decimal.NewFromFloat(0.10),
+			durationWeeks: 50,
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				existingLoan := &domain.Loan{LoanID: loanID}
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(existingLoan, nil)
+			},
+			expectedError: true,
+			errorContains: "already exists",
+			validateResult: func(t *testing.T, loan *domain.Loan, schedule []*domain.LoanSchedule) {
+				assert.Nil(t, loan)
+				assert.Nil(t, schedule)
+			},
+		},
+		{
+			name:          "Failure - Database error on GetByLoanID",
+			loanID:        "LOAN789",
+			amount:        decimal.NewFromFloat(5000000),
+			interestRate:  decimal.NewFromFloat(0.10),
+			durationWeeks: 50,
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(nil, errors.New("database connection error"))
+			},
+			expectedError: true,
+			errorContains: "database",
+			validateResult: func(t *testing.T, loan *domain.Loan, schedule []*domain.LoanSchedule) {
+				assert.Nil(t, loan)
+				assert.Nil(t, schedule)
+			},
+		},
+		{
+			name:          "Failure - Database error on Create loan",
+			loanID:        "LOAN101",
+			amount:        decimal.NewFromFloat(5000000),
+			interestRate:  decimal.NewFromFloat(0.10),
+			durationWeeks: 50,
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(nil, sql.ErrNoRows)
+				mockLoanRepo.On("Create", mock.Anything, mock.MatchedBy(func(loan *domain.Loan) bool {
+					return loan.LoanID == loanID
+				})).Return(errors.New("failed to create loan"))
+			},
+			expectedError: true,
+			errorContains: "database",
+			validateResult: func(t *testing.T, loan *domain.Loan, schedule []*domain.LoanSchedule) {
+				assert.Nil(t, loan)
+				assert.Nil(t, schedule)
+			},
+		},
+		{
+			name:          "Failure - Database error on CreateSchedule",
+			loanID:        "LOAN202",
+			amount:        decimal.NewFromFloat(5000000),
+			interestRate:  decimal.NewFromFloat(0.10),
+			durationWeeks: 50,
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(nil, sql.ErrNoRows)
+				mockLoanRepo.On("Create", mock.Anything, mock.MatchedBy(func(loan *domain.Loan) bool {
+					return loan.LoanID == loanID
+				})).Return(nil)
+				mockLoanRepo.On("CreateSchedule", mock.Anything, mock.MatchedBy(func(schedules []*domain.LoanSchedule) bool {
+					return len(schedules) == 50
+				})).Return(errors.New("failed to create schedule"))
+			},
+			expectedError: true,
+			errorContains: "database",
+			validateResult: func(t *testing.T, loan *domain.Loan, schedule []*domain.LoanSchedule) {
+				assert.Nil(t, loan)
+				assert.Nil(t, schedule)
+			},
+		},
 	}
 
-	loanID := "LOAN123"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			mockLoanRepo := &mocks.MockLoanRepository{}
+			mockPaymentRepo := &mocks.MockPaymentRepository{}
 
-	// Set expectations
-	mockLoanRepo.On("Create", mock.Anything, mock.MatchedBy(func(loan *domain.Loan) bool {
-		return loan.LoanID == loanID
-	})).Return(nil)
+			service := &billingService.BillingService{
+				LoanRepo:    mockLoanRepo,
+				PaymentRepo: mockPaymentRepo,
+			}
 
-	mockLoanRepo.On("CreateSchedule", mock.Anything, mock.MatchedBy(func(schedules []*domain.LoanSchedule) bool {
-		return len(schedules) == 50
-	})).Return(nil)
+			tt.setupMocks(mockLoanRepo, mockPaymentRepo, tt.loanID)
 
-	// Act
-	loan, schedule, err := service.CreateLoan(context.Background(), loanID)
+			request := &domain.CreateLoanRequest{
+				LoanID:        tt.loanID,
+				Amount:        tt.amount,
+				InterestRate:  tt.interestRate,
+				DurationWeeks: tt.durationWeeks,
+			}
 
-	// Assert
-	assert.NoError(t, err)
-	assert.Equal(t, loanID, loan.LoanID)
-	assert.Equal(t, 50, len(schedule))
-	assert.True(t, loan.WeeklyPayment.Equal(decimal.NewFromInt(110000)))
+			// Act
+			loan, schedule, err := service.CreateLoan(context.Background(), request)
 
-	mockLoanRepo.AssertExpectations(t)
+			// Assert
+			if tt.expectedError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+
+			tt.validateResult(t, loan, schedule)
+			mockLoanRepo.AssertExpectations(t)
+		})
+	}
 }
 
 func TestGetOutstanding_Success(t *testing.T) {

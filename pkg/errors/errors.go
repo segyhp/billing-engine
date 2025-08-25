@@ -92,7 +92,7 @@ func WrapLoanAlreadyClosed(loanID string) *BusinessError {
 func WrapDatabaseError(err error) *BusinessError {
 	return NewBusinessError(
 		ErrCodeDatabaseError,
-		"Database operation failed",
+		"database operation failed",
 		err,
 	)
 }

@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/segyhp/billing-engine/internal/config"
 	"github.com/segyhp/billing-engine/internal/domain"
 	"github.com/segyhp/billing-engine/internal/repository"
@@ -36,47 +39,78 @@ func NewBillingService(
 }
 
 // CreateLoan creates a new loan with payment schedule
-func (s *BillingService) CreateLoan(ctx context.Context, loanID string) (*domain.Loan, []*domain.LoanSchedule, error) {
-	// Business logic to implement:
-	// 1. Create loan entity with the configured amount, interest rate, and duration
+func (s *BillingService) CreateLoan(ctx context.Context, request *domain.CreateLoanRequest) (*domain.Loan, []*domain.LoanSchedule, error) {
+	// Check if loan already exists
+	existingLoan, err := s.LoanRepo.GetByLoanID(ctx, request.LoanID)
+	if err == nil && existingLoan != nil {
+		return nil, nil, customError.WrapLoanAlreadyExists(request.LoanID)
+	}
+
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, customError.WrapDatabaseError(err)
+	}
+
 	// 2. Calculate weekly payment amount: (Principal + Interest) / Duration
-	// 3. Generate payment schedule for 50 weeks
-	// 4. Save loan and schedule to database
-	// 5. Cache loan data in Redis for fast access
+	totalInterest := request.Amount.Mul(request.InterestRate)
+	totalAmount := request.Amount.Add(totalInterest)
+	weeklyPayment := totalAmount.Div(decimal.NewFromInt(int64(request.DurationWeeks)))
 
-	// Create loan entity
+	// Round to 2 decimal places for currency
+	weeklyPayment = weeklyPayment.Round(2)
+
+	// 3. Create loan entity
 	loan := &domain.Loan{
-		LoanID:        loanID,
-		Amount:        decimal.NewFromInt(5000000), // from config
-		InterestRate:  decimal.NewFromFloat(0.10),  // from config
-		DurationWeeks: 50,                          // from config
-		WeeklyPayment: s.calculateWeeklyPayment(),
-		Status:        "ACTIVE",
+		ID:            uuid.New(),
+		LoanID:        request.LoanID,
+		Amount:        request.Amount,
+		InterestRate:  request.InterestRate,
+		DurationWeeks: request.DurationWeeks,
+		WeeklyPayment: weeklyPayment,
+		Status:        domain.LoanStatusActive,
 	}
 
-	// Save loan
-	if err := s.LoanRepo.Create(ctx, loan); err != nil {
-		return nil, nil, err
-	}
+	// 4. Generate payment schedule for specified weeks
+	schedules := make([]*domain.LoanSchedule, 0, request.DurationWeeks)
+	startDate := time.Now().Truncate(24 * time.Hour) // Start from today at midnight
 
-	// Generate schedule
-	schedule := make([]*domain.LoanSchedule, 50)
-	for i := 0; i < 50; i++ {
-		schedule[i] = &domain.LoanSchedule{
-			LoanID:     loanID,
-			WeekNumber: i + 1,
-			DueDate:    loan.CreatedAt.AddDate(0, 0, (i+1)*7),
-			DueAmount:  loan.WeeklyPayment,
-			Status:     "PENDING",
+	//Assumption: Payments are due every 7 days from the start date to simplify
+	// In real-world, might need to consider weekends/holidays/business days
+	for week := 1; week <= request.DurationWeeks; week++ {
+
+		// Calculate due date (every 7 days)
+		dueDate := startDate.AddDate(0, 0, 7*(week-1))
+
+		schedule := &domain.LoanSchedule{
+			ID:         uuid.New(),
+			LoanID:     request.LoanID,
+			WeekNumber: week,
+			DueAmount:  weeklyPayment,
+			DueDate:    dueDate,
+			Status:     domain.ScheduleStatusPending,
 		}
+		schedules = append(schedules, schedule)
 	}
 
-	// Save schedule
-	if err := s.LoanRepo.CreateSchedule(ctx, schedule); err != nil {
-		return nil, nil, err
+	// 5. Save loan to database
+	if err = s.LoanRepo.Create(ctx, loan); err != nil {
+		return nil, nil, customError.WrapDatabaseError(err)
 	}
 
-	return loan, schedule, nil
+	// 6. Save schedule to database
+	if err = s.LoanRepo.CreateSchedule(ctx, schedules); err != nil {
+		// Rollback: try to delete the loan if schedule creation fails
+		// Note: In a real implementation, need to use database transactions in one service operation
+		return nil, nil, customError.WrapDatabaseError(err)
+	}
+
+	//// 7. Cache loan data in Redis for fast access
+	//cacheKey := fmt.Sprintf("loan:%s", loan.LoanID)
+	//
+	//// Cache for 24 hours
+	//expiration := 24 * time.Hour
+	//s.redis.Set(ctx, cacheKey, loan, expiration)
+
+	return loan, schedules, nil
 }
 
 // GetOutstanding calculates and returns the outstanding balance for a loan
@@ -94,16 +128,6 @@ func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (dec
 		return decimal.Zero, err
 	}
 
-	// Create loan entity
-	loan = &domain.Loan{
-		LoanID:        loanID,
-		Amount:        decimal.NewFromInt(5000000), // from config
-		InterestRate:  decimal.NewFromFloat(0.10),  // from config
-		DurationWeeks: 50,                          // from config
-		WeeklyPayment: s.calculateWeeklyPayment(),
-		Status:        "ACTIVE",
-	}
-
 	//Get payments
 	payments, err := s.PaymentRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
@@ -111,10 +135,6 @@ func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (dec
 	}
 
 	var totalPayments decimal.Decimal
-	payments = []*domain.Payment{
-		{LoanID: loanID, Amount: decimal.NewFromInt(110000)},
-		{LoanID: loanID, Amount: decimal.NewFromInt(110000)},
-	}
 	for _, payment := range payments {
 		totalPayments = totalPayments.Add(payment.Amount)
 	}
