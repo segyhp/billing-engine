@@ -176,6 +176,9 @@ func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool,
 	// Check which payments are overdue
 	for _, schedule := range schedules {
 		// Only check past due dates (not including today)
+		// for now we assume that timezone is not an issue
+		// In real-world, need to consider timezone differences between server and client (vary in timezone)
+		// e.g., if due date is today but time has not yet reached due time
 		if schedule.DueDate.After(now.Truncate(24 * time.Hour)) {
 			break // Don't check future payments or today's payment
 		}
@@ -199,104 +202,92 @@ func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool,
 }
 
 // MakePayment processes a payment for a loan
-func (s *BillingService) MakePayment(ctx context.Context, loanID string, amount decimal.Decimal) (*domain.Payment, error) {
-	// Business logic to implement:
-	// 1. Validate loan exists and is active
-	// 2. Find the earliest unpaid week in the schedule
-	// 3. Validate payment amount matches the weekly payment amount exactly
-	// 4. Create payment record
-	// 5. Update loan schedule status for that week
-	// 6. Update cached outstanding balance
-	// 7. Check if loan is fully paid and update status
-	// 8. Return payment details
-	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
+// MakePayment processes a payment for a loan
+func (s *BillingService) MakePayment(ctx context.Context, request domain.MakePaymentRequest) (*domain.Payment, error) {
+	// 1. Validate payment amount
+	if request.Amount.LessThanOrEqual(decimal.Zero) {
+		invalidAmount, _ := request.Amount.Float64()
+		return nil, customError.WrapInvalidPaymentAmount(invalidAmount)
+	}
+
+	// 2. Validate loan exists and is active
+	loan, err := s.LoanRepo.GetByLoanID(ctx, request.LoanID)
 	if err != nil {
-		return nil, err
+		return nil, customError.WrapDatabaseError(err)
 	}
 
-	weeklyPayment := decimal.NewFromInt(110000)
-	loan = &domain.Loan{
-		LoanID:        loanID,
-		Amount:        decimal.NewFromInt(5000000),
-		InterestRate:  decimal.NewFromFloat(0.10),
-		DurationWeeks: 50,
-		WeeklyPayment: weeklyPayment,
-		Status:        "ACTIVE",
+	if loan.Status != domain.LoanStatusActive {
+		return nil, customError.WrapLoanAlreadyClosed(request.LoanID)
 	}
 
-	if loan.Status != "ACTIVE" {
-		return nil, customError.WrapLoanAlreadyExists(loanID)
-	}
-
-	// 2. Find the earliest unpaid week in the schedule
-	schedules, err := s.LoanRepo.GetScheduleByLoanID(ctx, loanID)
+	// 3. Find the earliest unpaid week in the schedule
+	schedules, err := s.LoanRepo.GetScheduleByLoanID(ctx, request.LoanID)
 	if err != nil {
-		return nil, err
+		return nil, customError.WrapDatabaseError(err)
 	}
 
-	schedules = []*domain.LoanSchedule{
-		{LoanID: loanID, WeekNumber: 1, Status: "PENDING", DueAmount: weeklyPayment},
-		{LoanID: loanID, WeekNumber: 2, Status: "PENDING", DueAmount: weeklyPayment},
-	}
-
+	// Find the earliest unpaid week
 	var earliestUnpaid *domain.LoanSchedule
 	for _, schedule := range schedules {
-		if schedule.Status == "PENDING" {
+		if schedule.Status == domain.ScheduleStatusPending {
 			earliestUnpaid = schedule
 			break
 		}
 	}
 
-	//if earliestUnpaid == nil {
-	//	return nil, errors.New("no pending payments found")
-	//}
+	if earliestUnpaid == nil {
+		return nil, customError.WrapNoOutstandingBalance(request.LoanID)
+	}
 
-	// 3. Validate payment amount matches the weekly payment amount exactly
-	//if !amount.Equal(loan.WeeklyPayment) {
-	//	return nil, errors.New("payment amount must match weekly payment amount")
-	//}
+	// 4. Validate payment amount matches exactly
+	if !request.Amount.Equal(loan.WeeklyPayment) {
+		invalidAmount, _ := request.Amount.Float64()
+		return nil, customError.WrapInvalidPaymentAmount(invalidAmount)
+	}
 
-	// 4. Create payment record
+	// 5. Create payment record
 	payment := &domain.Payment{
-		LoanID:      loanID,
-		Amount:      amount,
-		CreatedAt:   time.Now(),
+		ID:          uuid.New(),
+		LoanID:      request.LoanID,
+		Amount:      request.Amount,
 		PaymentDate: time.Now(),
 		WeekNumber:  earliestUnpaid.WeekNumber,
 	}
 
 	err = s.PaymentRepo.Create(ctx, payment)
 	if err != nil {
-		return nil, err
+		return nil, customError.WrapDatabaseError(err)
 	}
 
-	// 5. Update loan schedule status for that week
-	err = s.LoanRepo.UpdateScheduleStatus(ctx, loanID, earliestUnpaid.WeekNumber, "PAID")
+	// 6. Update loan schedule status for that week
+	err = s.LoanRepo.UpdateScheduleStatus(ctx, request.LoanID, earliestUnpaid.WeekNumber, "PAID")
 	if err != nil {
-		return nil, err
+		return nil, customError.WrapDatabaseError(err)
 	}
 
-	// 6. Check if loan is fully paid and update status
+	// 7. Check if loan is fully paid and update status
 	allPaid := true
 	for _, schedule := range schedules {
+		// Skip the schedule we just paid
 		if schedule.WeekNumber == earliestUnpaid.WeekNumber {
-			continue // This one is now paid
+			continue
 		}
-		if schedule.Status == "PENDING" {
+		// Check if any other schedule is still pending
+		if schedule.Status == domain.ScheduleStatusPending {
 			allPaid = false
 			break
 		}
 	}
 
 	if allPaid {
-		err = s.LoanRepo.UpdateScheduleStatus(ctx, loanID, earliestUnpaid.WeekNumber, "PAID")
+		loan.Status = domain.LoanStatusClosed
+		err = s.LoanRepo.Update(ctx, loan)
 		if err != nil {
-			return nil, err
+			return nil, customError.WrapDatabaseError(err)
 		}
 	}
 
 	return payment, nil
-
 }
 
 // GetSchedule returns the payment schedule for a loan

@@ -18,6 +18,7 @@ type Payment struct {
 }
 
 type MakePaymentRequest struct {
+	LoanID string          `json:"loan_id" validate:"required"`
 	Amount decimal.Decimal `json:"amount" validate:"required,gt=0"`
 }
 
