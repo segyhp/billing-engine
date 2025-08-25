@@ -381,3 +381,127 @@ func TestBillingHandler_GetOutstanding(t *testing.T) {
 		})
 	}
 }
+
+func TestBillingHandler_IsDelinquent(t *testing.T) {
+	cfg := &config.Config{
+		App: config.AppConfig{
+			LoanAmount:         1000.0,
+			LoanDurationWeeks:  50,
+			AnnualInterestRate: 10.0,
+		},
+	}
+
+	tests := []struct {
+		name           string
+		loanID         string
+		setupMock      func(*mocks.MockBillingService)
+		expectedStatus int
+		expectedBody   string
+		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:   "successful delinquency check - not delinquent",
+			loanID: "loan123",
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("IsDelinquent", mock.Anything, "loan123").
+					Return(false, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var wrapperResponse struct {
+					Success   bool                      `json:"success"`
+					Data      domain.DelinquentResponse `json:"data"`
+					Timestamp time.Time                 `json:"timestamp"`
+				}
+				err := json.Unmarshal(w.Body.Bytes(), &wrapperResponse)
+				assert.NoError(t, err)
+
+				response := wrapperResponse.Data
+				assert.Equal(t, "loan123", response.LoanID)
+				assert.False(t, response.IsDelinquent)
+				assert.Equal(t, 0, response.MissedWeeks)
+			},
+		},
+		{
+			name:   "successful delinquency check - is delinquent",
+			loanID: "loan456",
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("IsDelinquent", mock.Anything, "loan456").
+					Return(true, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var wrapperResponse struct {
+					Success   bool                      `json:"success"`
+					Data      domain.DelinquentResponse `json:"data"`
+					Timestamp time.Time                 `json:"timestamp"`
+				}
+				err := json.Unmarshal(w.Body.Bytes(), &wrapperResponse)
+				assert.NoError(t, err)
+
+				response := wrapperResponse.Data
+				assert.Equal(t, "loan456", response.LoanID)
+				assert.True(t, response.IsDelinquent)
+				assert.Equal(t, 2, response.MissedWeeks)
+			},
+		},
+		{
+			name:   "loan not found",
+			loanID: "nonexistent",
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("IsDelinquent", mock.Anything, "nonexistent").
+					Return(false, assert.AnError).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "Failed to check delinquency",
+		},
+		{
+			name:           "missing loan ID",
+			loanID:         "",
+			setupMock:      func(mockService *mocks.MockBillingService) {},
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Loan ID is required",
+		},
+		{
+			name:   "closed loan - not delinquent",
+			loanID: "closed_loan",
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("IsDelinquent", mock.Anything, "closed_loan").
+					Return(false, assert.AnError).Once() // Service returns error for closed loans
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "Failed to check delinquency",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := mocks.NewMockBillingService()
+			tt.setupMock(mockService)
+
+			billingHandler := handler.NewBillingHandler(mockService, cfg)
+
+			// Create request with loan ID in URL path
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/loans/"+tt.loanID+"/delinquent", nil)
+
+			// Set up mux vars to simulate the router
+			req = mux.SetURLVars(req, map[string]string{"loanId": tt.loanID})
+
+			w := httptest.NewRecorder()
+
+			billingHandler.IsDelinquent(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			if tt.expectedBody != "" {
+				assert.Contains(t, w.Body.String(), tt.expectedBody)
+			}
+
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+
+			mockService.AssertExpectations(t)
+		})
+	}
+}

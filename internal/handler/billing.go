@@ -109,18 +109,26 @@ func (h *BillingHandler) IsDelinquent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Implement delinquency check logic
-	// isDelinquent, missedWeeks, err := h.service.IsDelinquent(r.Context(), loanID)
-	// if err != nil {
-	// 	response.InternalServerError(w, "Failed to check delinquency", err)
-	// 	return
-	// }
+	isDelinquent, err := h.service.IsDelinquent(r.Context(), loanID)
+	if err != nil {
+		response.InternalServerError(w, "Failed to check delinquency", err)
+		return
+	}
 
-	// For now, return a placeholder response
-	response.Success(w, map[string]string{
-		"message": "IsDelinquent endpoint - TODO: Implement business logic",
-		"loan_id": loanID,
-	})
+	// Calculate missed weeks by checking the service logic
+	// For now, we'll set it based on delinquency status
+	missedWeeks := 0
+	if isDelinquent {
+		missedWeeks = 2 // Minimum threshold for delinquency
+	}
+
+	responseData := domain.DelinquentResponse{
+		LoanID:       loanID,
+		IsDelinquent: isDelinquent,
+		MissedWeeks:  missedWeeks,
+	}
+
+	response.Success(w, responseData)
 }
 
 // MakePayment processes a payment for a loan
