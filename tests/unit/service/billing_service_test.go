@@ -8,6 +8,7 @@ import (
 	"time"
 
 	billingService "github.com/segyhp/billing-engine/internal/service"
+	"github.com/segyhp/billing-engine/pkg/utils"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -323,43 +324,195 @@ func TestGetOutstanding(t *testing.T) {
 	}
 }
 
-func TestIsDelinquent_Success(t *testing.T) {
-	mockLoanRepo := &mocks.MockLoanRepository{}
-	mockPaymentRepo := &mocks.MockPaymentRepository{}
+func TestIsDelinquent(t *testing.T) {
+	tests := []struct {
+		name               string
+		loanID             string
+		setupMocks         func(*mocks.MockLoanRepository, *mocks.MockPaymentRepository, string)
+		expectedError      bool
+		errorContains      string
+		expectedDelinquent bool
+	}{
+		{
+			name:   "Success - Loan is delinquent (2 consecutive missed payments)",
+			loanID: "LOAN123",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:        loanID,
+					Amount:        decimal.NewFromInt(5000000),
+					InterestRate:  decimal.NewFromFloat(0.10),
+					DurationWeeks: 50,
+					WeeklyPayment: decimal.NewFromInt(110000),
+					Status:        domain.LoanStatusActive,
+					CreatedAt:     time.Now().AddDate(0, 0, -21), // 3 weeks ago
+				}
 
-	service := &billingService.BillingService{
-		LoanRepo:    mockLoanRepo,
-		PaymentRepo: mockPaymentRepo,
+				schedules := []*domain.LoanSchedule{
+					{LoanID: loanID, WeekNumber: 1, DueDate: time.Now().AddDate(0, 0, -14), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending},
+					{LoanID: loanID, WeekNumber: 2, DueDate: time.Now().AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending},
+					{LoanID: loanID, WeekNumber: 3, DueDate: time.Now(), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending},
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockLoanRepo.On("GetScheduleByLoanID", mock.Anything, loanID).Return(schedules, nil)
+			},
+			expectedError:      false,
+			expectedDelinquent: true,
+		},
+		{
+			name:   "Success - Loan is not delinquent (only 1 missed payment)",
+			loanID: "LOAN124",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:        loanID,
+					Amount:        decimal.NewFromInt(5000000),
+					InterestRate:  decimal.NewFromFloat(0.10),
+					DurationWeeks: 50,
+					WeeklyPayment: decimal.NewFromInt(110000),
+					Status:        domain.LoanStatusActive,
+					CreatedAt:     time.Now().AddDate(0, 0, -14), // 2 weeks ago
+				}
+
+				schedules := []*domain.LoanSchedule{
+					{LoanID: loanID, WeekNumber: 1, DueDate: time.Now().AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending},
+					{LoanID: loanID, WeekNumber: 2, DueDate: time.Now().AddDate(0, 0, 7), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending}, // Future payment
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockLoanRepo.On("GetScheduleByLoanID", mock.Anything, loanID).Return(schedules, nil)
+			},
+			expectedError:      false,
+			expectedDelinquent: false,
+		},
+		{
+			name:   "Success - Not delinquent (payments made on time)",
+			loanID: "LOAN125",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:        loanID,
+					Amount:        decimal.NewFromInt(5000000),
+					InterestRate:  decimal.NewFromFloat(0.10),
+					DurationWeeks: 50,
+					WeeklyPayment: decimal.NewFromInt(110000),
+					Status:        domain.LoanStatusActive,
+					CreatedAt:     time.Now().AddDate(0, 0, -21), // 3 weeks ago
+				}
+
+				schedules := []*domain.LoanSchedule{
+					{LoanID: loanID, WeekNumber: 1, DueDate: time.Now().AddDate(0, 0, -14), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPaid},
+					{LoanID: loanID, WeekNumber: 2, DueDate: time.Now().AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPaid},
+					{LoanID: loanID, WeekNumber: 3, DueDate: time.Now(), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending},
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockLoanRepo.On("GetScheduleByLoanID", mock.Anything, loanID).Return(schedules, nil)
+			},
+			expectedError:      false,
+			expectedDelinquent: false,
+		},
+		{
+			name:   "Success - Not delinquent (consecutive missed but reset by payment)",
+			loanID: "LOAN126",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:        loanID,
+					Amount:        decimal.NewFromInt(5000000),
+					InterestRate:  decimal.NewFromFloat(0.10),
+					DurationWeeks: 50,
+					WeeklyPayment: decimal.NewFromInt(110000),
+					Status:        domain.LoanStatusActive,
+					CreatedAt:     time.Now().AddDate(0, 0, -28), // 4 weeks ago
+				}
+
+				schedules := []*domain.LoanSchedule{
+					{ID: utils.GenerateUUID(), LoanID: loanID, WeekNumber: 1, DueDate: time.Now().AddDate(0, 0, -21), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending},
+					{ID: utils.GenerateUUID(), LoanID: loanID, WeekNumber: 2, DueDate: time.Now().AddDate(0, 0, -14), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPaid}, // Payment resets counter
+					{ID: utils.GenerateUUID(), LoanID: loanID, WeekNumber: 3, DueDate: time.Now().AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending},
+					{ID: utils.GenerateUUID(), LoanID: loanID, WeekNumber: 4, DueDate: time.Now(), DueAmount: decimal.NewFromInt(110000), Status: domain.ScheduleStatusPending}, // Current week
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockLoanRepo.On("GetScheduleByLoanID", mock.Anything, loanID).Return(schedules, nil)
+			},
+			expectedError:      false,
+			expectedDelinquent: false,
+		},
+		{
+			name:   "Failure - Loan not found",
+			loanID: "NONEXISTENT",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(nil, sql.ErrNoRows)
+			},
+			expectedError:      true,
+			errorContains:      "database",
+			expectedDelinquent: false,
+		},
+		{
+			name:   "Failure - Database error getting schedule",
+			loanID: "LOAN127",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:    loanID,
+					Status:    domain.LoanStatusActive,
+					CreatedAt: time.Now().AddDate(0, 0, -21),
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockLoanRepo.On("GetScheduleByLoanID", mock.Anything, loanID).Return(nil, errors.New("schedule query failed"))
+			},
+			expectedError:      true,
+			errorContains:      "database",
+			expectedDelinquent: false,
+		},
+		{
+			name:   "Failure - loan status is already closed",
+			loanID: "LOAN127",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:    loanID,
+					Status:    domain.LoanStatusClosed,
+					CreatedAt: time.Now().AddDate(0, 0, -21),
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+			},
+			expectedError:      true,
+			errorContains:      "closed",
+			expectedDelinquent: false,
+		},
 	}
 
-	loanID := "LOAN123"
-	loan := &domain.Loan{
-		LoanID:        loanID,
-		Amount:        decimal.NewFromInt(5000000),
-		InterestRate:  decimal.NewFromFloat(0.10),
-		DurationWeeks: 50,
-		WeeklyPayment: decimal.NewFromInt(110000),
-		Status:        domain.LoanStatusActive,
-		CreatedAt:     time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			mockLoanRepo := &mocks.MockLoanRepository{}
+			mockPaymentRepo := &mocks.MockPaymentRepository{}
+
+			service := &billingService.BillingService{
+				LoanRepo:    mockLoanRepo,
+				PaymentRepo: mockPaymentRepo,
+			}
+
+			tt.setupMocks(mockLoanRepo, mockPaymentRepo, tt.loanID)
+
+			// Act
+			isDelinquent, err := service.IsDelinquent(context.Background(), tt.loanID)
+
+			// Assert
+			if tt.expectedError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedDelinquent, isDelinquent)
+			}
+
+			mockLoanRepo.AssertExpectations(t)
+			mockPaymentRepo.AssertExpectations(t)
+		})
 	}
-
-	schedules := []*domain.LoanSchedule{
-		{LoanID: loanID, WeekNumber: 1, DueDate: loan.CreatedAt.AddDate(0, 0, -14), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
-		{LoanID: loanID, WeekNumber: 2, DueDate: loan.CreatedAt.AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
-	}
-
-	mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
-	mockLoanRepo.On("GetScheduleByLoanID", mock.Anything, loanID).Return(schedules, nil)
-
-	// Act
-	delinquent, err := service.IsDelinquent(context.Background(), loanID)
-
-	// Assert
-	assert.NoError(t, err)
-	assert.True(t, delinquent)
-
-	mockLoanRepo.AssertExpectations(t)
-	mockPaymentRepo.AssertExpectations(t)
 }
 
 func TestMakePayment_Success(t *testing.T) {

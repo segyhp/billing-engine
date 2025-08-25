@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,7 +12,7 @@ import (
 	"github.com/segyhp/billing-engine/internal/domain"
 	"github.com/segyhp/billing-engine/internal/repository"
 	customError "github.com/segyhp/billing-engine/pkg/errors"
-	"github.com/segyhp/billing-engine/pkg/utils"
+	//"github.com/segyhp/billing-engine/pkg/utils"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
@@ -114,7 +115,6 @@ func (s *BillingService) CreateLoan(ctx context.Context, request *domain.CreateL
 }
 
 // GetOutstanding calculates and returns the outstanding balance for a loan
-// GetOutstanding calculates and returns the outstanding balance for a loan
 func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (decimal.Decimal, error) {
 	// Get loan details
 	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
@@ -145,70 +145,57 @@ func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (dec
 }
 
 // IsDelinquent checks if a borrower is delinquent (missed 2+ consecutive payments)
-// TODO: Implement this method with business logic
 func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool, error) {
-	// Business logic to implement:
-	// 1. Get loan schedule for the loan
-	// 2. Get current week number based on loan start date
-	// 3. Check which payments are overdue
-	// 4. Count consecutive missed payments
-	// 5. Return true if missed payments >= threshold (2 weeks)
-	// 6. Cache delinquency status in Redis
-
-	//Get loan details
-	var isDelinquent bool
+	// Get loan details
 	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
-		return isDelinquent, err
+		return false, customError.WrapDatabaseError(err)
 	}
 
-	// Create loan entity
-	loan = &domain.Loan{
-		LoanID:        loanID,
-		Amount:        decimal.NewFromInt(5000000),
-		InterestRate:  decimal.NewFromFloat(0.10),
-		DurationWeeks: 50,
-		WeeklyPayment: decimal.NewFromInt(110000),
-		Status:        "ACTIVE",
-		CreatedAt:     time.Now().AddDate(0, 0, -21),
+	if loan.Status != domain.LoanStatusActive {
+		// Only active loans can be delinquent
+		return false, customError.WrapLoanAlreadyClosed(loanID)
 	}
 
-	//Get schedule
+	// Get loan schedule for the loan
 	schedules, err := s.LoanRepo.GetScheduleByLoanID(ctx, loanID)
 	if err != nil {
-		return isDelinquent, err
+		return false, customError.WrapDatabaseError(err)
 	}
 
-	schedules = []*domain.LoanSchedule{
-		{LoanID: loanID, WeekNumber: 1, DueDate: loan.CreatedAt.AddDate(0, 0, -14), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
-		{LoanID: loanID, WeekNumber: 2, DueDate: loan.CreatedAt.AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
-	}
-
-	// Get current week number
-	currentWeek := utils.GetCurrentWeek(loan.CreatedAt, time.Now())
+	// Sort schedules by due date to ensure proper order
+	sort.Slice(schedules, func(i, j int) bool {
+		return schedules[i].DueDate.Before(schedules[j].DueDate)
+	})
 
 	// Count consecutive missed payments
 	consecutiveMissed := 0
+	now := time.Now()
+	const threshold = 2 // 2 weeks threshold
 
-	// Check overdue payments starting from week 1 up to current week
+	// Check which payments are overdue
 	for _, schedule := range schedules {
-		if schedule.WeekNumber >= currentWeek {
-			break // Don't check future payments
+		// Only check past due dates (not including today)
+		if schedule.DueDate.After(now.Truncate(24 * time.Hour)) {
+			break // Don't check future payments or today's payment
 		}
 
-		if utils.IsDateOverdue(schedule.DueDate) && schedule.Status == "PENDING" {
+		// Check if this payment is overdue (past due date and still pending)
+		if schedule.Status == domain.ScheduleStatusPending {
 			consecutiveMissed++
-		} else if schedule.Status == "PAID" {
-			consecutiveMissed = 0 // Reset counter if payment was made
-		}
 
-		// If we hit 2 consecutive missed payments, borrower is delinquent
-		if consecutiveMissed >= 2 {
-			return true, nil
+			// Return true if missed payments >= threshold (2 weeks)
+			if consecutiveMissed >= threshold {
+				return true, nil
+			}
+		} else if schedule.Status == domain.ScheduleStatusPaid {
+			// Reset counter when payment is made
+			consecutiveMissed = 0
 		}
+		// Note: We don't reset for future payments - only process overdue ones
 	}
 
-	return isDelinquent, nil
+	return false, nil
 }
 
 // MakePayment processes a payment for a loan
@@ -345,4 +332,15 @@ func (s *BillingService) calculateWeeklyPayment() decimal.Decimal {
 	interest := principal.Mul(annualRate)
 	totalAmount := principal.Add(interest)
 	return totalAmount.Div(weeks)
+}
+
+// Helper function to calculate current week number from loan start date
+func (s *BillingService) getCurrentWeekFromLoanStart(startDate, currentDate time.Time) int {
+	if currentDate.Before(startDate) {
+		return 0
+	}
+
+	duration := currentDate.Sub(startDate)
+	weeks := int(duration.Hours() / (24 * 7)) // Convert to weeks
+	return weeks + 1                          // Week 1 starts from loan start date
 }
