@@ -85,18 +85,18 @@ func (h *BillingHandler) GetOutstanding(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// TODO: Implement outstanding calculation logic
-	// outstanding, err := h.service.GetOutstanding(r.Context(), loanID)
-	// if err != nil {
-	// 	response.InternalServerError(w, "Failed to get outstanding", err)
-	// 	return
-	// }
+	outstanding, err := h.service.GetOutstanding(r.Context(), loanID)
+	if err != nil {
+		response.InternalServerError(w, "Failed to get outstanding", err)
+		return
+	}
 
-	// For now, return a placeholder response
-	response.Success(w, map[string]string{
-		"message": "GetOutstanding endpoint - TODO: Implement business logic",
-		"loan_id": loanID,
-	})
+	responseData := domain.OutstandingResponse{
+		LoanID:      loanID,
+		Outstanding: outstanding,
+	}
+
+	response.Success(w, responseData)
 }
 
 // IsDelinquent checks if a borrower is delinquent
@@ -156,30 +156,6 @@ func (h *BillingHandler) MakePayment(w http.ResponseWriter, r *http.Request) {
 		"message": "MakePayment endpoint - TODO: Implement business logic",
 		"loan_id": loanID,
 		"amount":  req.Amount,
-	})
-}
-
-// GetSchedule returns the payment schedule for a loan
-func (h *BillingHandler) GetSchedule(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	loanID := vars["loanId"]
-
-	if loanID == "" {
-		response.BadRequest(w, "Loan ID is required", nil)
-		return
-	}
-
-	// TODO: Implement schedule retrieval logic
-	// schedule, err := h.service.GetSchedule(r.Context(), loanID)
-	// if err != nil {
-	// 	response.InternalServerError(w, "Failed to get schedule", err)
-	// 	return
-	// }
-
-	// For now, return a placeholder response
-	response.Success(w, map[string]string{
-		"message": "GetSchedule endpoint - TODO: Implement business logic",
-		"loan_id": loanID,
 	})
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/segyhp/billing-engine/internal/config"
 	"github.com/segyhp/billing-engine/internal/domain"
 	"github.com/segyhp/billing-engine/internal/handler"
@@ -264,6 +265,118 @@ func TestBillingHandler_CreateLoan(t *testing.T) {
 			}
 
 			// Verify mock calls
+			mockService.AssertExpectations(t)
+		})
+	}
+}
+
+func TestBillingHandler_GetOutstanding(t *testing.T) {
+	cfg := &config.Config{
+		App: config.AppConfig{
+			LoanAmount:         1000.0,
+			LoanDurationWeeks:  50,
+			AnnualInterestRate: 10.0,
+		},
+	}
+
+	tests := []struct {
+		name           string
+		loanID         string
+		setupMock      func(*mocks.MockBillingService)
+		expectedStatus int
+		expectedBody   string
+		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
+	}{
+		{
+			name:   "successful outstanding calculation",
+			loanID: "loan123",
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("GetOutstanding", mock.Anything, "loan123").
+					Return(decimal.NewFromFloat(1500.50), nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var wrapperResponse struct {
+					Success   bool                       `json:"success"`
+					Data      domain.OutstandingResponse `json:"data"`
+					Timestamp time.Time                  `json:"timestamp"`
+				}
+				err := json.Unmarshal(w.Body.Bytes(), &wrapperResponse)
+				assert.NoError(t, err)
+
+				response := wrapperResponse.Data
+				assert.Equal(t, "loan123", response.LoanID)
+				assert.True(t, response.Outstanding.Equal(decimal.NewFromFloat(1500.50)))
+			},
+		},
+		{
+			name:   "loan not found",
+			loanID: "nonexistent",
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("GetOutstanding", mock.Anything, "nonexistent").
+					Return(decimal.Zero, assert.AnError).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "Failed to get outstanding",
+		},
+		{
+			name:           "missing loan ID",
+			loanID:         "",
+			setupMock:      func(mockService *mocks.MockBillingService) {},
+			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Loan ID is required",
+		},
+		{
+			name:   "zero outstanding balance",
+			loanID: "paid_loan",
+			setupMock: func(mockService *mocks.MockBillingService) {
+				mockService.On("GetOutstanding", mock.Anything, "paid_loan").
+					Return(decimal.Zero, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var wrapperResponse struct {
+					Success   bool                       `json:"success"`
+					Data      domain.OutstandingResponse `json:"data"`
+					Timestamp time.Time                  `json:"timestamp"`
+				}
+				err := json.Unmarshal(w.Body.Bytes(), &wrapperResponse)
+				assert.NoError(t, err)
+
+				response := wrapperResponse.Data
+				assert.Equal(t, "paid_loan", response.LoanID)
+				assert.True(t, response.Outstanding.Equal(decimal.Zero))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockService := mocks.NewMockBillingService()
+			tt.setupMock(mockService)
+
+			billingHandler := handler.NewBillingHandler(mockService, cfg)
+
+			// Create request with loan ID in URL path
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/loans/"+tt.loanID+"/outstanding", nil)
+
+			// Set up mux vars to simulate the router
+			req = mux.SetURLVars(req, map[string]string{"loanId": tt.loanID})
+
+			w := httptest.NewRecorder()
+
+			billingHandler.GetOutstanding(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			if tt.expectedBody != "" {
+				assert.Contains(t, w.Body.String(), tt.expectedBody)
+			}
+
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+
 			mockService.AssertExpectations(t)
 		})
 	}
