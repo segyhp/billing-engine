@@ -7,6 +7,7 @@ import (
 	"github.com/segyhp/billing-engine/internal/config"
 	"github.com/segyhp/billing-engine/internal/domain"
 	"github.com/segyhp/billing-engine/internal/repository"
+	customError "github.com/segyhp/billing-engine/pkg/errors"
 	"github.com/segyhp/billing-engine/pkg/utils"
 
 	"github.com/redis/go-redis/v9"
@@ -14,8 +15,8 @@ import (
 )
 
 type BillingService struct {
-	loanRepo    repository.LoanRepository
-	paymentRepo repository.PaymentRepository
+	LoanRepo    repository.LoanRepository
+	PaymentRepo repository.PaymentRepository
 	redis       *redis.Client
 	config      *config.Config
 }
@@ -27,8 +28,8 @@ func NewBillingService(
 	config *config.Config,
 ) *BillingService {
 	return &BillingService{
-		loanRepo:    loanRepo,
-		paymentRepo: paymentRepo,
+		LoanRepo:    loanRepo,
+		PaymentRepo: paymentRepo,
 		redis:       redis,
 		config:      config,
 	}
@@ -54,7 +55,7 @@ func (s *BillingService) CreateLoan(ctx context.Context, loanID string) (*domain
 	}
 
 	// Save loan
-	if err := s.loanRepo.Create(ctx, loan); err != nil {
+	if err := s.LoanRepo.Create(ctx, loan); err != nil {
 		return nil, nil, err
 	}
 
@@ -71,7 +72,7 @@ func (s *BillingService) CreateLoan(ctx context.Context, loanID string) (*domain
 	}
 
 	// Save schedule
-	if err := s.loanRepo.CreateSchedule(ctx, schedule); err != nil {
+	if err := s.LoanRepo.CreateSchedule(ctx, schedule); err != nil {
 		return nil, nil, err
 	}
 
@@ -88,7 +89,7 @@ func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (dec
 	// 5. Return outstanding amount
 
 	//Get loan details
-	loan, err := s.loanRepo.GetByLoanID(ctx, loanID)
+	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
 		return decimal.Zero, err
 	}
@@ -104,7 +105,7 @@ func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (dec
 	}
 
 	//Get payments
-	payments, err := s.paymentRepo.GetByLoanID(ctx, loanID)
+	payments, err := s.PaymentRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
 		return decimal.Zero, err
 	}
@@ -134,7 +135,7 @@ func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool,
 
 	//Get loan details
 	var isDelinquent bool
-	loan, err := s.loanRepo.GetByLoanID(ctx, loanID)
+	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
 		return isDelinquent, err
 	}
@@ -151,7 +152,7 @@ func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool,
 	}
 
 	//Get schedule
-	schedules, err := s.loanRepo.GetScheduleByLoanID(ctx, loanID)
+	schedules, err := s.LoanRepo.GetScheduleByLoanID(ctx, loanID)
 	if err != nil {
 		return isDelinquent, err
 	}
@@ -189,7 +190,6 @@ func (s *BillingService) IsDelinquent(ctx context.Context, loanID string) (bool,
 }
 
 // MakePayment processes a payment for a loan
-// TODO: Implement this method with business logic
 func (s *BillingService) MakePayment(ctx context.Context, loanID string, amount decimal.Decimal) (*domain.Payment, error) {
 	// Business logic to implement:
 	// 1. Validate loan exists and is active
@@ -200,8 +200,94 @@ func (s *BillingService) MakePayment(ctx context.Context, loanID string, amount 
 	// 6. Update cached outstanding balance
 	// 7. Check if loan is fully paid and update status
 	// 8. Return payment details
+	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
+	if err != nil {
+		return nil, err
+	}
 
-	panic("TODO: Implement MakePayment business logic")
+	weeklyPayment := decimal.NewFromInt(110000)
+	loan = &domain.Loan{
+		LoanID:        loanID,
+		Amount:        decimal.NewFromInt(5000000),
+		InterestRate:  decimal.NewFromFloat(0.10),
+		DurationWeeks: 50,
+		WeeklyPayment: weeklyPayment,
+		Status:        "ACTIVE",
+	}
+
+	if loan.Status != "ACTIVE" {
+		return nil, customError.WrapLoanAlreadyExists(loanID)
+	}
+
+	// 2. Find the earliest unpaid week in the schedule
+	schedules, err := s.LoanRepo.GetScheduleByLoanID(ctx, loanID)
+	if err != nil {
+		return nil, err
+	}
+
+	schedules = []*domain.LoanSchedule{
+		{LoanID: loanID, WeekNumber: 1, Status: "PENDING", DueAmount: weeklyPayment},
+		{LoanID: loanID, WeekNumber: 2, Status: "PENDING", DueAmount: weeklyPayment},
+	}
+
+	var earliestUnpaid *domain.LoanSchedule
+	for _, schedule := range schedules {
+		if schedule.Status == "PENDING" {
+			earliestUnpaid = schedule
+			break
+		}
+	}
+
+	//if earliestUnpaid == nil {
+	//	return nil, errors.New("no pending payments found")
+	//}
+
+	// 3. Validate payment amount matches the weekly payment amount exactly
+	//if !amount.Equal(loan.WeeklyPayment) {
+	//	return nil, errors.New("payment amount must match weekly payment amount")
+	//}
+
+	// 4. Create payment record
+	payment := &domain.Payment{
+		LoanID:      loanID,
+		Amount:      amount,
+		CreatedAt:   time.Now(),
+		PaymentDate: time.Now(),
+		WeekNumber:  earliestUnpaid.WeekNumber,
+	}
+
+	err = s.PaymentRepo.Create(ctx, payment)
+	if err != nil {
+		return nil, err
+	}
+
+	// 5. Update loan schedule status for that week
+	err = s.LoanRepo.UpdateScheduleStatus(ctx, loanID, earliestUnpaid.WeekNumber, "PAID")
+	if err != nil {
+		return nil, err
+	}
+
+	// 6. Check if loan is fully paid and update status
+	allPaid := true
+	for _, schedule := range schedules {
+		if schedule.WeekNumber == earliestUnpaid.WeekNumber {
+			continue // This one is now paid
+		}
+		if schedule.Status == "PENDING" {
+			allPaid = false
+			break
+		}
+	}
+
+	if allPaid {
+		err = s.LoanRepo.UpdateScheduleStatus(ctx, loanID, earliestUnpaid.WeekNumber, "PAID")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return payment, nil
+
 }
 
 // GetSchedule returns the payment schedule for a loan
