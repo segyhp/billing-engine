@@ -165,42 +165,162 @@ func TestCreateLoan(t *testing.T) {
 	}
 }
 
-func TestGetOutstanding_Success(t *testing.T) {
-	mockLoanRepo := &mocks.MockLoanRepository{}
-	mockPaymentRepo := &mocks.MockPaymentRepository{}
+func TestGetOutstanding(t *testing.T) {
+	tests := []struct {
+		name                string
+		loanID              string
+		setupMocks          func(*mocks.MockLoanRepository, *mocks.MockPaymentRepository, string)
+		expectedError       bool
+		errorContains       string
+		expectedOutstanding decimal.Decimal
+		expectedLoanStatus  string
+	}{
+		{
+			name:   "Success - No payments made",
+			loanID: "LOAN123",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:        loanID,
+					Amount:        decimal.NewFromInt(5000000), // Principal: 5,000,000
+					InterestRate:  decimal.NewFromFloat(0.10),  // Interest rate: 10%
+					DurationWeeks: 50,
+					WeeklyPayment: decimal.NewFromInt(110000),
+					Status:        domain.LoanStatusActive,
+				}
+				var payments []*domain.Payment // No payments
 
-	service := &billingService.BillingService{
-		LoanRepo:    mockLoanRepo,
-		PaymentRepo: mockPaymentRepo,
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockPaymentRepo.On("GetByLoanID", mock.Anything, loanID).Return(payments, nil)
+			},
+			expectedError:       false,
+			expectedOutstanding: decimal.NewFromInt(5500000), // 5,000,000 + 500,000 (10% interest) - 0
+		},
+		{
+			name:   "Success - Partial payments made",
+			loanID: "LOAN123",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:        loanID,
+					Amount:        decimal.NewFromInt(5000000),
+					InterestRate:  decimal.NewFromFloat(0.10),
+					DurationWeeks: 50,
+					WeeklyPayment: decimal.NewFromInt(110000),
+					Status:        domain.LoanStatusActive,
+				}
+				payments := []*domain.Payment{
+					{LoanID: loanID, Amount: decimal.NewFromInt(110000)},
+					{LoanID: loanID, Amount: decimal.NewFromInt(110000)},
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockPaymentRepo.On("GetByLoanID", mock.Anything, loanID).Return(payments, nil)
+			},
+			expectedError:       false,
+			expectedOutstanding: decimal.NewFromInt(5280000), // 5,500,000 - 220,000
+		},
+		{
+			name:   "Success - Loan fully paid",
+			loanID: "LOAN123",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:        loanID,
+					Amount:        decimal.NewFromInt(5000000),
+					InterestRate:  decimal.NewFromFloat(0.10),
+					DurationWeeks: 50,
+					WeeklyPayment: decimal.NewFromInt(110000),
+					Status:        domain.LoanStatusClosed,
+				}
+
+				// Generate 50 payments of 110,000 each = 5,500,000 total
+				payments := make([]*domain.Payment, 50)
+				for i := 0; i < 50; i++ {
+					payments[i] = &domain.Payment{
+						LoanID: loanID,
+						Amount: decimal.NewFromInt(110000),
+					}
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockPaymentRepo.On("GetByLoanID", mock.Anything, loanID).Return(payments, nil)
+			},
+			expectedError:       false,
+			expectedOutstanding: decimal.Zero, // Fully paid
+			expectedLoanStatus:  domain.LoanStatusClosed,
+		},
+		{
+			name:   "Failure - Loan not found",
+			loanID: "NONEXISTENT",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(nil, sql.ErrNoRows)
+			},
+			expectedError:       true,
+			errorContains:       "database",
+			expectedOutstanding: decimal.Zero,
+		},
+		{
+			name:   "Failure - Database error getting loan",
+			loanID: "LOAN123",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(nil, errors.New("database connection error"))
+			},
+			expectedError:       true,
+			errorContains:       "database",
+			expectedOutstanding: decimal.Zero,
+		},
+		{
+			name:   "Failure - Database error getting payments",
+			loanID: "LOAN123",
+			setupMocks: func(mockLoanRepo *mocks.MockLoanRepository, mockPaymentRepo *mocks.MockPaymentRepository, loanID string) {
+				loan := &domain.Loan{
+					LoanID:        loanID,
+					Amount:        decimal.NewFromInt(5000000),
+					InterestRate:  decimal.NewFromFloat(0.10),
+					DurationWeeks: 50,
+					WeeklyPayment: decimal.NewFromInt(110000),
+					Status:        domain.LoanStatusActive,
+				}
+
+				mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
+				mockPaymentRepo.On("GetByLoanID", mock.Anything, loanID).Return(nil, errors.New("payment query failed"))
+			},
+			expectedError:       true,
+			errorContains:       "database",
+			expectedOutstanding: decimal.Zero,
+		},
 	}
 
-	loanID := "LOAN123"
-	loan := &domain.Loan{
-		LoanID:        loanID,
-		Amount:        decimal.NewFromInt(5000000),
-		InterestRate:  decimal.NewFromFloat(0.10),
-		DurationWeeks: 50,
-		WeeklyPayment: decimal.NewFromInt(110000),
-		Status:        "ACTIVE",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			mockLoanRepo := &mocks.MockLoanRepository{}
+			mockPaymentRepo := &mocks.MockPaymentRepository{}
+
+			service := &billingService.BillingService{
+				LoanRepo:    mockLoanRepo,
+				PaymentRepo: mockPaymentRepo,
+			}
+
+			tt.setupMocks(mockLoanRepo, mockPaymentRepo, tt.loanID)
+
+			// Act
+			outstanding, err := service.GetOutstanding(context.Background(), tt.loanID)
+
+			// Assert
+			if tt.expectedError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.True(t, outstanding.Equal(tt.expectedOutstanding),
+					"Expected %s, got %s", tt.expectedOutstanding.String(), outstanding.String())
+			}
+
+			mockLoanRepo.AssertExpectations(t)
+			mockPaymentRepo.AssertExpectations(t)
+		})
 	}
-
-	payments := []*domain.Payment{
-		{LoanID: loanID, Amount: decimal.NewFromInt(110000)},
-		{LoanID: loanID, Amount: decimal.NewFromInt(110000)},
-	}
-
-	mockLoanRepo.On("GetByLoanID", mock.Anything, loanID).Return(loan, nil)
-	mockPaymentRepo.On("GetByLoanID", mock.Anything, loanID).Return(payments, nil)
-
-	// Act
-	outstanding, err := service.GetOutstanding(context.Background(), loanID)
-
-	// Assert
-	assert.NoError(t, err)
-	assert.True(t, outstanding.Equal(decimal.NewFromInt(4780000))) // 5000000 + 500000 - 220000
-
-	mockLoanRepo.AssertExpectations(t)
-	mockPaymentRepo.AssertExpectations(t)
 }
 
 func TestIsDelinquent_Success(t *testing.T) {
@@ -219,7 +339,7 @@ func TestIsDelinquent_Success(t *testing.T) {
 		InterestRate:  decimal.NewFromFloat(0.10),
 		DurationWeeks: 50,
 		WeeklyPayment: decimal.NewFromInt(110000),
-		Status:        "ACTIVE",
+		Status:        domain.LoanStatusActive,
 		CreatedAt:     time.Now(),
 	}
 
@@ -260,7 +380,7 @@ func TestMakePayment_Success(t *testing.T) {
 		InterestRate:  decimal.NewFromFloat(0.10),
 		DurationWeeks: 50,
 		WeeklyPayment: weeklyPayment,
-		Status:        "ACTIVE",
+		Status:        domain.LoanStatusActive,
 	}
 
 	schedules := []*domain.LoanSchedule{
@@ -300,7 +420,7 @@ func TestMakePayment_Success(t *testing.T) {
 //	loan := &domain.Loan{
 //		LoanID:        loanID,
 //		WeeklyPayment: decimal.NewFromInt(110000),
-//		Status:        "ACTIVE",
+//		Status:        domain.LoanStatusActive,
 //	}
 //
 //	schedules := []*domain.LoanSchedule{

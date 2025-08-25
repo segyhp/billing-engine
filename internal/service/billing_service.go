@@ -114,32 +114,34 @@ func (s *BillingService) CreateLoan(ctx context.Context, request *domain.CreateL
 }
 
 // GetOutstanding calculates and returns the outstanding balance for a loan
+// GetOutstanding calculates and returns the outstanding balance for a loan
 func (s *BillingService) GetOutstanding(ctx context.Context, loanID string) (decimal.Decimal, error) {
-	// Business logic to implement:
-	// 1. Get loan details from database
-	// 2. Get all payments made for this loan
-	// 3. Calculate outstanding = Total Loan Amount - Sum of Payments
-	// 4. Cache result in Redis with TTL
-	// 5. Return outstanding amount
-
-	//Get loan details
+	// Get loan details
 	loan, err := s.LoanRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
-		return decimal.Zero, err
+		return decimal.Zero, customError.WrapDatabaseError(err)
 	}
 
-	//Get payments
+	// Get payments
 	payments, err := s.PaymentRepo.GetByLoanID(ctx, loanID)
 	if err != nil {
-		return decimal.Zero, err
+		return decimal.Zero, customError.WrapDatabaseError(err)
 	}
 
+	// Calculate total payments made
 	var totalPayments decimal.Decimal
 	for _, payment := range payments {
 		totalPayments = totalPayments.Add(payment.Amount)
 	}
 
-	return loan.Amount.Sub(totalPayments), nil
+	// Calculate total loan amount (principal + interest)
+	totalInterest := loan.Amount.Mul(loan.InterestRate)
+	totalLoanAmount := loan.Amount.Add(totalInterest)
+
+	// Outstanding = Total Loan Amount (including interest) - Total Payments
+	outstanding := totalLoanAmount.Sub(totalPayments)
+
+	return outstanding, nil
 }
 
 // IsDelinquent checks if a borrower is delinquent (missed 2+ consecutive payments)
