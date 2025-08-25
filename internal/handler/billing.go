@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/segyhp/billing-engine/internal/config"
 	"github.com/segyhp/billing-engine/internal/domain"
@@ -45,7 +47,7 @@ func (h *BillingHandler) CreateLoan(w http.ResponseWriter, r *http.Request) {
 	// Apply default values from config if not provided
 	// for testing purposes
 	// these can be overridden by request payload
-	// e.g. curl -X POST http://localhost:8080/loans -d '{"amount":1500,"duration_weeks":30,"interest_rate":0.12}'
+	// e.g. curl -X POST http://localhost:8080/api/v1/loans -d '{"amount":1500,"duration_weeks":30,"interest_rate":0.12, loan_id:"custom-loan-id"}' -H "Content-Type: application/json"
 	if req.Amount.IsZero() {
 		req.Amount = decimal.NewFromFloat(h.config.App.LoanAmount)
 	}
@@ -54,6 +56,11 @@ func (h *BillingHandler) CreateLoan(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.InterestRate.IsZero() {
 		req.InterestRate = decimal.NewFromFloat(h.config.App.AnnualInterestRate)
+	}
+	if req.LoanID == "" {
+		timestamp := time.Now().Format("20060102_150405")
+		loanID := fmt.Sprintf("loan_%s", timestamp)
+		req.LoanID = loanID
 	}
 
 	if err := h.validator.Struct(&req); err != nil {

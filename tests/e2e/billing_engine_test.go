@@ -1,3 +1,6 @@
+//go:build e2e
+// +build e2e
+
 package e2e
 
 import (
@@ -26,6 +29,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// RUN via go test -v ./tests/e2e -run TestBillingEngineEndToEnd
+// Remove the build tag and use go test -tags=e2e ./tests/e2e -run TestBillingEngineEndToEnd
 var testDB *sqlx.DB
 
 func TestMain(m *testing.M) {
@@ -41,7 +46,7 @@ func setup() {
 		panic(fmt.Sprintf("Failed to load config: %v", err))
 	}
 
-	// Connect to postgres database to create test database
+	// Connect to postgres "admin" database
 	cfg.Database.Name = "postgres"
 	adminDB, err := sqlx.Connect("postgres", cfg.Database.DSN())
 	if err != nil {
@@ -49,9 +54,15 @@ func setup() {
 	}
 	defer adminDB.Close()
 
-	// Create test database
 	testDBName := "billing_engine_test"
-	adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", testDBName))
+
+	// Drop DB if exists (safe because IF EXISTS prevents error)
+	_, err = adminDB.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", testDBName))
+	if err != nil {
+		panic(fmt.Sprintf("Failed to drop existing test database: %v", err))
+	}
+
+	// Create test database
 	_, err = adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", testDBName))
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create test database: %v", err))
@@ -64,7 +75,7 @@ func setup() {
 		panic(fmt.Sprintf("Failed to connect to test database: %v", err))
 	}
 
-	// Execute init.sql to create tables
+	// Initialize schema
 	if err := executeInitSQL(testDB); err != nil {
 		panic(fmt.Sprintf("Failed to initialize database schema: %v", err))
 	}
@@ -108,10 +119,19 @@ func setupTestEnvironment(t *testing.T) (*httptest.Server, *sqlx.DB, *redis.Clie
 	// Clean test data before each test
 	cleanupTestData(testDB)
 
-	// Setup Redis
+	redisHost := os.Getenv("REDIS_HOST")
+	redisPort := os.Getenv("REDIS_PORT")
+
+	if redisHost == "" {
+		redisHost = "localhost" // fallback for local run
+	}
+	if redisPort == "" {
+		redisPort = "6379"
+	}
+
 	redisClient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-		DB:   1, // Use test DB
+		Addr: fmt.Sprintf("%s:%s", redisHost, redisPort),
+		DB:   1,
 	})
 
 	// Test connections

@@ -3,7 +3,6 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -89,9 +88,6 @@ func TestBillingHandler_CreateLoan(t *testing.T) {
 
 				// Now access the actual loan data from the Data field
 				response := wrapperResponse.Data
-
-				fmt.Println(response.Loan)
-
 				assert.NotNil(t, response.Loan)
 				if response.Loan != nil {
 					assert.Equal(t, "loan123", response.Loan.LoanID)
@@ -162,17 +158,17 @@ func TestBillingHandler_CreateLoan(t *testing.T) {
 			expectedStatus: http.StatusBadRequest,
 			expectedBody:   "Invalid JSON payload",
 		},
-		{
-			name: "validation error - missing loan ID",
-			requestBody: domain.CreateLoanRequest{
-				Amount:        decimal.NewFromFloat(1000.0),
-				DurationWeeks: 25,
-				InterestRate:  decimal.NewFromFloat(0.10),
-			},
-			setupMock:      func(mockService *mocks.MockBillingService) {},
-			expectedStatus: http.StatusBadRequest,
-			expectedBody:   "Validation failed",
-		},
+		//{
+		//	name: "validation error - missing loan ID",
+		//	requestBody: domain.CreateLoanRequest{
+		//		Amount:        decimal.NewFromFloat(1000.0),
+		//		DurationWeeks: 25,
+		//		InterestRate:  decimal.NewFromFloat(0.10),
+		//	},
+		//	setupMock:      func(mockService *mocks.MockBillingService) {},
+		//	expectedStatus: http.StatusBadRequest,
+		//	expectedBody:   "Validation failed",
+		//},
 		{
 			name: "validation error - negative interest rate",
 			requestBody: domain.CreateLoanRequest{

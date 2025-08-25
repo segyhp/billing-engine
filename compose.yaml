@@ -14,6 +14,13 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - billing_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U billing_user -d billing_engine"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # Redis
   redis:
@@ -21,6 +28,83 @@ services:
     container_name: billing_redis
     ports:
       - "6379:6379"
+    networks:
+      - billing_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Main Go Application
+  app:
+    image: golang:1.24-alpine
+    container_name: billing_app
+    working_dir: /app
+    volumes:
+      - .:/app
+      - go_modules:/go/pkg/mod
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=billing_user
+      - DB_PASSWORD=billing_pass
+      - DB_NAME=billing_engine
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CGO_ENABLED=0
+      - APP_ENV=development
+      - LOG_LEVEL=debug
+      - LOAN_AMOUNT=5000000
+      - LOAN_DURATION_WEEKS=50
+      - ANNUAL_INTEREST_RATE=0.10
+      - DELINQUENT_WEEKS_THRESHOLD=2
+    networks:
+      - billing_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Will be controlled by Makefile commands
+
+  # Scheduler (optional separate service)
+  scheduler:
+    image: golang:1.24-alpine
+    container_name: billing_scheduler
+    working_dir: /app
+    volumes:
+      - .:/app
+      - go_modules:/go/pkg/mod
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=billing_user
+      - DB_PASSWORD=billing_pass
+      - DB_NAME=billing_engine
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CGO_ENABLED=0
+      - APP_ENV=development
+      - LOG_LEVEL=debug
+    networks:
+      - billing_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - scheduler
 
 volumes:
   postgres_data:
+  go_modules:
+
+networks:
+  billing_network:
+    driver: bridge
