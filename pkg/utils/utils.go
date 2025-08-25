@@ -3,14 +3,8 @@ package utils
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
-
-// GenerateUUID generates a new UUID
-func GenerateUUID() uuid.UUID {
-	return uuid.New()
-}
 
 // CalculateWeeklyPayment calculates the weekly payment amount
 // Formula: (Principal + Interest) / Duration

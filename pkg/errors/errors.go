@@ -104,3 +104,19 @@ func WrapCacheError(err error) *BusinessError {
 		err,
 	)
 }
+
+func WrapNoOutstandingBalance(loanID string) *BusinessError {
+	return NewBusinessError(
+		ErrCodeNoOutstandingBalance,
+		fmt.Sprintf("Loan with ID %s has no outstanding balance", loanID),
+		ErrNoOutstandingBalance,
+	)
+}
+
+func WrapInvalidPaymentAmount(amount float64) *BusinessError {
+	return NewBusinessError(
+		ErrCodeInvalidPaymentAmount,
+		fmt.Sprintf("Invalid payment amount: %.2f", amount),
+		ErrInvalidPaymentAmount,
+	)
+}
