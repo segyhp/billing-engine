@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	utils2 "github.com/segyhp/billing-engine/pkg/utils"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 )
@@ -42,7 +43,7 @@ func TestCalculateWeeklyPayment(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// This test will fail initially (RED) - implement the function to make it pass (GREEN)
-			result := CalculateWeeklyPayment(tt.principal, tt.rate, tt.weeks)
+			result := utils2.CalculateWeeklyPayment(tt.principal, tt.rate, tt.weeks)
 			assert.True(t, result.Equal(tt.expected),
 				"Expected %v, but got %v", tt.expected, result)
 		})
@@ -80,7 +81,7 @@ func TestCalculateDueDate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CalculateDueDate(tt.startDate, tt.weekNumber)
+			result := utils2.CalculateDueDate(tt.startDate, tt.weekNumber)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -123,7 +124,7 @@ func TestGetCurrentWeek(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetCurrentWeek(tt.startDate, tt.currentDate)
+			result := utils2.GetCurrentWeek(tt.startDate, tt.currentDate)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
