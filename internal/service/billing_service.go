@@ -290,41 +290,6 @@ func (s *BillingService) MakePayment(ctx context.Context, request domain.MakePay
 	return payment, nil
 }
 
-// GetSchedule returns the payment schedule for a loan
-// TODO: Implement this method with business logic
-func (s *BillingService) GetSchedule(ctx context.Context, loanID string) ([]*domain.LoanSchedule, error) {
-	// Business logic to implement:
-	// 1. Get loan schedule from database
-	// 2. Cache schedule in Redis for performance
-	// 3. Return schedule with payment status for each week
-
-	// 8. Return payment details
-
-	//Get schedule
-	schedules, err := s.LoanRepo.GetScheduleByLoanID(ctx, loanID)
-	if err != nil {
-		return nil, err
-	}
-
-	schedules = []*domain.LoanSchedule{
-		{LoanID: loanID, WeekNumber: 1, DueDate: time.Now().AddDate(0, 0, -14), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
-		{LoanID: loanID, WeekNumber: 2, DueDate: time.Now().AddDate(0, 0, -7), DueAmount: decimal.NewFromInt(110000), Status: "PENDING"},
-	}
-
-	return schedules, nil
-}
-
-// Helper method to calculate weekly payment amount
-func (s *BillingService) calculateWeeklyPayment() decimal.Decimal {
-	principal := decimal.NewFromInt(5000000)
-	annualRate := decimal.NewFromFloat(0.10)
-	weeks := decimal.NewFromInt(50)
-
-	interest := principal.Mul(annualRate)
-	totalAmount := principal.Add(interest)
-	return totalAmount.Div(weeks)
-}
-
 // Helper function to calculate current week number from loan start date
 func (s *BillingService) getCurrentWeekFromLoanStart(startDate, currentDate time.Time) int {
 	if currentDate.Before(startDate) {
