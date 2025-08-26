@@ -111,13 +111,6 @@ func (s *billingService) CreateLoan(ctx context.Context, request *domain.CreateL
 		return nil, nil, customError.WrapDatabaseError(err)
 	}
 
-	//// 7. Cache loan data in Redis for fast access
-	//cacheKey := fmt.Sprintf("loan:%s", loan.LoanID)
-	//
-	//// Cache for 24 hours
-	//expiration := 24 * time.Hour
-	//s.redis.Set(ctx, cacheKey, loan, expiration)
-
 	return loan, schedules, nil
 }
 
@@ -131,7 +124,7 @@ func (s *billingService) GetOutstanding(ctx context.Context, loanID string) (dec
 
 	// Get payments
 	payments, err := s.PaymentRepo.GetByLoanID(ctx, loanID)
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return decimal.Zero, customError.WrapDatabaseError(err)
 	}
 
